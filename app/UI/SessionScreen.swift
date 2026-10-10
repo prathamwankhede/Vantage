@@ -9,6 +9,8 @@ struct SessionScreen: View {
     @Environment(\.dismiss) private var dismiss
     @Environment(\.scenePhase) private var scenePhase
     @StateObject private var engine = FreeroamEngine()
+    @ObservedObject private var settings = DetectionSettings.shared
+    @State private var showSettings = false
 
     var body: some View {
         ZStack {
@@ -16,8 +18,21 @@ struct SessionScreen: View {
             CameraPreview(session: engine.session)
                 .ignoresSafeArea()
                 .accessibilityHidden(true)
-            EdgeWash(side: engine.washSide, strength: engine.washStrength)
-                .ignoresSafeArea()
+
+            if mode == .freeroam, settings.nightVision, let cg = engine.nightVisionImage {
+                Image(decorative: cg, scale: 1)
+                    .resizable()
+                    .scaledToFill()
+                    .ignoresSafeArea()
+                    .opacity(0.85)
+                    .accessibilityHidden(true)
+            }
+
+            // Navigate only: soft ear cue wash. Freeroam has no L/C/R bars.
+            if mode == .navigate {
+                EdgeWash(side: engine.washSide, strength: engine.washStrength)
+                    .ignoresSafeArea()
+            }
 
             VStack {
                 topBar
@@ -40,6 +55,12 @@ struct SessionScreen: View {
             }
         }
         .navigationBarBackButtonHidden(true)
+        .sheet(isPresented: $showSettings) {
+            NavigationStack {
+                DetectionSettingsScreen()
+            }
+            .preferredColorScheme(.dark)
+        }
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
             engine.start(mode: mode, goal: goal)
@@ -72,6 +93,15 @@ struct SessionScreen: View {
                 .padding(.horizontal, 14)
                 .padding(.vertical, 8)
                 .background(.ultraThinMaterial, in: Capsule())
+            Spacer()
+            Button { showSettings = true } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 18, weight: .semibold))
+                    .foregroundStyle(Brand.cream)
+                    .frame(width: 48, height: 48)
+                    .background(.ultraThinMaterial, in: Circle())
+            }
+            .accessibilityLabel("Detection settings")
         }
         .padding(.horizontal, 20)
         .padding(.top, 12)
@@ -84,14 +114,25 @@ struct SessionScreen: View {
     }
 
     private var statusDetail: String {
+        if mode == .freeroam {
+            var parts = ["Haptics"]
+            parts.append(settings.alertMode.title)
+            if let alert = engine.alert {
+                parts.append(alert.band.rawValue.capitalized)
+            } else {
+                parts.append("Path clear")
+            }
+            if settings.nightVision { parts.append("Night Vision") }
+            return parts.joined(separator: " · ")
+        }
         var parts: [String] = []
         if engine.quietMode { parts.append("Quiet") }
         if let alert = engine.alert {
             parts.append(alert.zone.label.capitalized)
         } else {
-            parts.append(mode == .navigate ? "Following landmarks" : "Path clear")
+            parts.append("Following landmarks")
         }
-        if mode == .navigate, !engine.navigateStepText.isEmpty {
+        if !engine.navigateStepText.isEmpty {
             parts.append(engine.navigateStepText)
         } else {
             parts.append(engine.headphoneStatus)

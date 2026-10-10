@@ -11,7 +11,6 @@ enum Zone: Int, CaseIterable {
         }
     }
 
-    /// Screen / world bearing in radians for spatial audio (−π/2 left … +π/2 right).
     var bearingRadians: Float {
         switch self {
         case .left: return -.pi / 3
@@ -34,32 +33,40 @@ struct ObstacleAlert: Equatable {
     let distance: Float
     let interval: TimeInterval
     let intensity: Float
+    let band: DistanceBand
 }
 
 enum AlertPolicy {
-    static let silentBeyond: Float = 3.0
-    static let farDistance: Float = 2.5
-    static let nearDistance: Float = 0.4
     static let stopDistance: Float = 0.5
+    static let nearBand: Float = 0.8
+    static let mediumBand: Float = 1.5
+    /// Kept for Navigate speech urgency.
     static let announceDistance: Float = 2.0
-    static let slowInterval: TimeInterval = 1.0
-    static let fastInterval: TimeInterval = 0.18
 
-    /// Only the nearest zone alerts. Nil when everything is beyond the silent range.
-    static func alert(for distances: SIMD3<Float>) -> ObstacleAlert? {
+    /// Pulse interval shortens as obstacles get closer (Night Vision–style).
+    static func alert(for distances: SIMD3<Float>, maxDistance: Float, quickResponse: Bool) -> ObstacleAlert? {
         guard let zone = Zone.allCases.min(by: { distances[$0.rawValue] < distances[$1.rawValue] }) else {
             return nil
         }
         let distance = distances[zone.rawValue]
-        guard distance < silentBeyond else { return nil }
+        guard distance < maxDistance else { return nil }
 
-        let closeness = 1 - min(max((distance - nearDistance) / (farDistance - nearDistance), 0), 1)
-        let interval = slowInterval - Double(closeness) * (slowInterval - fastInterval)
+        let closeness = 1 - min(max(distance / maxDistance, 0), 1)
+        let slow: TimeInterval = quickResponse ? 0.85 : 1.1
+        let fast: TimeInterval = quickResponse ? 0.12 : 0.22
+        let interval = slow - Double(closeness) * (slow - fast)
+
+        let band: DistanceBand
+        if distance < nearBand { band = .near }
+        else if distance < min(mediumBand, maxDistance) { band = .medium }
+        else { band = .far }
+
         return ObstacleAlert(
             zone: zone,
             distance: distance,
             interval: interval,
-            intensity: 0.35 + 0.55 * closeness
+            intensity: 0.4 + 0.6 * closeness,
+            band: band
         )
     }
 }

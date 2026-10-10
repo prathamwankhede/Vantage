@@ -36,7 +36,7 @@ struct MainScreen: View {
                     Text("How can Vantage help?")
                         .font(.system(size: 34, weight: .heavy, design: .rounded))
                         .foregroundStyle(Brand.cream)
-                    Text("Freeroam watches the path. Navigate talks you through a place using what the camera sees — no map.")
+                    Text("Freeroam is haptics-only while you walk. Navigate talks you through a place using what the camera sees — no map.")
                         .font(Brand.bodyFont)
                         .foregroundStyle(Brand.creamMuted)
                 }
@@ -45,8 +45,8 @@ struct MainScreen: View {
 
                 modeCard(
                     title: "Freeroam",
-                    subtitle: "Calm path awareness",
-                    systemImage: "waveform.path.ecg"
+                    subtitle: "Haptics watch the path",
+                    systemImage: "iphone.radiowaves.left.and.right"
                 ) {
                     showFreeroam = true
                 }

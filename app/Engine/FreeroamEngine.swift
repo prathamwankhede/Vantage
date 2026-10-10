@@ -5,7 +5,7 @@ import CoreMotion
 import Speech
 import UIKit
 
-/// Passive path companion. Cue hierarchy: spatial tone > haptics > rare voice.
+/// Freeroam: haptics-only walking (White Cane / Night Vision style). Navigate may use spatial + voice.
 @MainActor
 final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     enum Mode: String {
@@ -28,11 +28,14 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var mode: Mode = .freeroam
     /// Walking, from ARKit's tracked position. Spoken directions are only useful while moving.
     @Published private(set) var isMoving = false
+    /// Optional LiDAR night-vision depth image (full frame, not L/C/R bars).
+    @Published private(set) var nightVisionImage: CGImage?
 
     let session = ARSession()
     let headphones = HeadphoneMotion()
     let spatial = SpatialTone()
     let navigate = NavigateSession()
+    let settings = DetectionSettings.shared
 
     private let haptics = HapticPulser()
     private let speaker = Speaker.shared
@@ -100,7 +103,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             try? await Task.sleep(nanoseconds: 700_000_000)
             let line = mode == .navigate
                 ? "Navigate mode. I'll guide you toward \(goal) using what I can see. Say next when you're ready for another step."
-                : "Freeroam. I'll watch the path. Say Vantage when you need me."
+                : "Freeroam. Haptics watch the path. Say Vantage when you need me."
             self.say(line, interrupt: true)
         }
     }
@@ -111,6 +114,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         listener.stop()
         speaker.stop()
         spatial.stop()
+        haptics.setContinuousClose(false)
         headphones.stop()
         session.pause()
         motion.stopAccelerometerUpdates()
@@ -145,8 +149,14 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         }
 
         let distances = reading.distances
+        let nightCG: CGImage? = {
+            guard let depth = frame.sceneDepth else { return nil }
+            return NightVisionRenderer.cgImage(from: depth)
+        }()
         Task { @MainActor in
             self.currentFrame = frame
+            if self.settings.nightVision { self.nightVisionImage = nightCG }
+            else { self.nightVisionImage = nil }
             self.updateMotion(from: frame)
             self.ingest(distances)
         }
@@ -186,7 +196,11 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         if history.count > smoothingFrames { history.removeFirst() }
         distances = history.reduce(SIMD3<Float>(repeating: 0), +) / Float(history.count)
 
-        let raw = AlertPolicy.alert(for: distances)
+        let raw = AlertPolicy.alert(
+            for: distances,
+            maxDistance: settings.maxDistance,
+            quickResponse: settings.quickResponse
+        )
         if let raw {
             if raw.zone == stableZone {
                 zoneHits += 1
@@ -217,36 +231,58 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
 
     private func applyCues() {
         let now = Date()
-        guard let alert else {
+
+        if mode == .freeroam {
+            // Haptics only — no beeps, no spatial tone, no L/C/R wash.
             washSide = nil
             washStrength = 0
-            spatial.drive(pan: 0, closeness: 0, headphonesConnected: headphones.usingHeadphones)
-            if now.timeIntervalSince(lastPulse) >= 1.2 {
+            spatial.drive(pan: 0, closeness: 0, headphonesConnected: false)
+
+            guard let alert else {
+                haptics.setContinuousClose(false)
+                if now.timeIntervalSince(lastPulse) >= 1.4 {
+                    lastPulse = now
+                    haptics.heartbeat()
+                }
+                return
+            }
+
+            let veryClose = alert.distance < AlertPolicy.stopDistance
+            if settings.continuousCloseVibration, veryClose {
+                haptics.setContinuousClose(true, intensity: alert.intensity)
+                return
+            }
+            haptics.setContinuousClose(false)
+
+            if now.timeIntervalSince(lastPulse) >= alert.interval {
                 lastPulse = now
-                haptics.heartbeat()
+                haptics.play(settings.pattern(for: alert.band), intensity: alert.intensity)
             }
             return
         }
 
+        // Navigate: spatial tone + optional wash toward hazard; haptics still pulse.
+        guard let alert else {
+            haptics.setContinuousClose(false)
+            spatial.drive(pan: 0, closeness: 0, headphonesConnected: headphones.usingHeadphones)
+            return
+        }
         let closeness = Double(alert.intensity)
-        let bearing = alert.zone.bearingRadians
-        let pan = headphones.pan(forBearingRadians: bearing)
+        let pan = headphones.pan(forBearingRadians: alert.zone.bearingRadians)
         spatial.drive(pan: pan, closeness: closeness, headphonesConnected: headphones.usingHeadphones)
         washSide = alert.zone
         washStrength = closeness
-
+        haptics.setContinuousClose(false)
         if now.timeIntervalSince(lastPulse) >= alert.interval {
             lastPulse = now
-            if quietMode, alert.distance < AlertPolicy.stopDistance {
-                haptics.urgentStop()
-            } else {
-                haptics.pulse(intensity: alert.intensity)
-            }
+            haptics.play(settings.pattern(for: alert.band), intensity: alert.intensity)
         }
     }
 
     private func speakWarnings() {
-        guard !handlingUtterance, !quietMode else { return }
+        // Freeroam: no automatic speech while walking — haptics only (ask with “Vantage…”).
+        guard mode == .navigate else { return }
+        guard !handlingUtterance, !quietMode, settings.speechFeedback || mode == .navigate else { return }
         let now = Date()
         guard now >= awaitingRequestUntil else { return }
 
@@ -263,7 +299,6 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         let inPath = alert.distance < AlertPolicy.announceDistance
         if inPath, isMoving { wasInPath = true }
 
-        // Standing still (e.g. asking a question), the tone and haptics are enough — don't talk over answers.
         if isMoving, alert.distance < AlertPolicy.stopDistance, now.timeIntervalSince(lastStop) > 4 {
             lastStop = now
             let dodge = dodgePhrase(for: alert).map { "Stop, \($0)" } ?? "Stop"

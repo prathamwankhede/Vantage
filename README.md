@@ -12,7 +12,7 @@ Vantage is not a replacement for a white cane or a guide dog.
 
 ## What it does
 
-1. **Freeroam** — Passive path awareness. A spatial tone in your AirPods points toward the nearest hazard; haptics quicken as it gets closer; voice stays quiet unless something is urgent or you ask.
+1. **Freeroam** — Haptics-only while walking (White Cane–style near/medium/far patterns, continuous buzz when very close). Optional LiDAR night-vision overlay. No beeps, no side bars. Ask with “Vantage…” when you want voice.
 2. **Navigate** — Tell Vantage a destination (“the exit”, “pharmacy counter”). Gemini reads the camera and gives short landmark steps. Depth safety stays on underneath. No MapKit, no GPS routing.
 3. **Ask** — Say “Vantage…” then a question (“What’s ahead?”, “Name that”). Answers stay short and honest when unsure.
 
