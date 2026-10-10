@@ -29,17 +29,17 @@ enum SceneAI {
     }
 
     /// Online Gemini (vision) → on-device Gemma → short Vision templates.
-    static func answer(_ question: String, jpeg: Data, frame: ARFrame?) async -> String {
+    static func answer(_ question: String, jpeg: Data, frame: ARFrame?, context: SceneContext) async -> String {
+        let sensors = context.promptText
         if isOnline {
             do {
-                return try await GeminiClient.answer(question, in: jpeg)
+                return try await GeminiClient.answer(question, in: jpeg, sensors: sensors)
             } catch {
                 // Fall through to Gemma.
             }
         }
 
-        let summary = frame.map { SceneLabels.summary(for: $0) } ?? "No camera labels."
-        if let gemma = await GemmaClient.answer(question: question, sceneSummary: summary, jpeg: jpeg) {
+        if let gemma = await GemmaClient.answer(question: question, sensors: sensors, jpeg: jpeg) {
             return gemma
         }
 

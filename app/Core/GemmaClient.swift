@@ -49,15 +49,16 @@ enum GemmaClient {
         Task { _ = await ensureLoaded() }
     }
 
-    static func answer(question: String, sceneSummary: String, jpeg: Data? = nil) async -> String? {
+    static func answer(question: String, sensors: String, jpeg: Data? = nil) async -> String? {
         guard await ensureLoaded() else { return nil }
 
         let prompt = """
         This photo is from a phone on their chest. \
         Use left, ahead, or right when useful. Be honest if unsure. \
-        Never invent street names or signal colors. \
-        Never say the path is clear or safe — depth sensing handles that. \
-        On-device vision labels: \(sceneSummary). \
+        Never invent street names or signal colors.
+
+        \(GeminiClient.sensorBlock(sensors))
+
         Question: \(question)
         """
 

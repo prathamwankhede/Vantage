@@ -32,19 +32,33 @@ enum GeminiClient {
         }
     }
 
-    static func answer(_ question: String, in jpeg: Data) async throws -> String {
+    /// How every prompt introduces the phone's own measurements.
+    static func sensorBlock(_ sensors: String) -> String {
+        """
+        Phone sensor readings taken with this photo. They are measured, so trust them over \
+        your own visual estimate for distances, motion and what is closest; use the photo for \
+        what things are. If anything is within 2 m (6 ft), mention it first. Give distances in \
+        feet only, never metres. Don't promise the way is safe — report what the sensors measured.
+        \(sensors)
+        """
+    }
+
+    static func answer(_ question: String, in jpeg: Data, sensors: String) async throws -> String {
         let prompt = """
         You are Vantage, a calm guide for a blind or low-vision person. \
-        This photo is from a phone on their chest. Answer in under 18 words. \
+        This photo is from a phone on their chest. Answer in under 25 words. \
         Use left, ahead, or right. Be honest if unsure — say you think or aren't sure. \
         Never claim you can detect glass. Do not invent street names or signal colors. \
-        This is situational awareness, not turn-by-turn GPS routing. \
+        This is situational awareness, not turn-by-turn GPS routing.
+
+        \(sensorBlock(sensors))
+
         Question: \(question)
         """
         return try await generate(prompt: prompt, jpeg: jpeg, json: false)
     }
 
-    static func navigateStep(goal: String, lastStep: String, in jpeg: Data) async throws -> NavigateStep {
+    static func navigateStep(goal: String, lastStep: String, in jpeg: Data, sensors: String) async throws -> NavigateStep {
         let prompt = """
         You are Vantage, guiding a blind or low-vision person to a destination using only what is \
         visible in this chest-worn camera photo. There is no map and no GPS. \
@@ -54,7 +68,10 @@ enum GeminiClient {
         {"landmark":"short visible landmark or empty","action":"one short imperative under 16 words",\
         "bearing":"left|ahead|right","confidence":"high|medium|low","arrived":false,"unsure":false}. \
         If the destination appears reached, set arrived true. If you cannot see useful clues, set unsure true \
-        and say so in action. Never invent room numbers or street names that are not readable in the photo.
+        and say so in action. Never invent room numbers or street names that are not readable in the photo. \
+        Don't send them toward a side the sensors say is blocked within 1 metre.
+
+        \(sensorBlock(sensors))
         """
         let raw = try await generate(prompt: prompt, jpeg: jpeg, json: true)
         return try decodeStep(raw)

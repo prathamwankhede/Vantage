@@ -68,4 +68,52 @@ enum DepthZoneAnalyzer {
         }
         return DepthReading(distances: distances, points: points)
     }
+
+    /// Nearest distance (5th percentile, confident samples) per cell of a coarse portrait grid,
+    /// rows top→bottom and columns left→right. Nil where too few samples. Used to brief the model.
+    nonisolated static func grid(in depthData: ARDepthData, rows: Int = 3, cols: Int = 3) -> [[Float?]] {
+        let empty = [[Float?]](repeating: [Float?](repeating: nil, count: cols), count: rows)
+        let depthMap = depthData.depthMap
+        let confidenceMap = depthData.confidenceMap
+
+        CVPixelBufferLockBaseAddress(depthMap, .readOnly)
+        defer { CVPixelBufferUnlockBaseAddress(depthMap, .readOnly) }
+        if let confidenceMap { CVPixelBufferLockBaseAddress(confidenceMap, .readOnly) }
+        defer { if let confidenceMap { CVPixelBufferUnlockBaseAddress(confidenceMap, .readOnly) } }
+
+        guard let depthBase = CVPixelBufferGetBaseAddress(depthMap) else { return empty }
+        let width = CVPixelBufferGetWidth(depthMap)
+        let height = CVPixelBufferGetHeight(depthMap)
+        let depthRowBytes = CVPixelBufferGetBytesPerRow(depthMap)
+        let confidenceBase = confidenceMap.flatMap { CVPixelBufferGetBaseAddress($0) }
+        let confidenceRowBytes = confidenceMap.map { CVPixelBufferGetBytesPerRow($0) } ?? 0
+
+        // Same orientation as nearestPerZone: buffer x = portrait top→bottom, buffer y = portrait right→left.
+        var cells = [[Float]](repeating: [], count: rows * cols)
+        for y in stride(from: 0, to: height, by: 2) {
+            let col = (height - 1 - y) * cols / height
+            let depthRow = (depthBase + y * depthRowBytes).assumingMemoryBound(to: Float32.self)
+            let confidenceRow = confidenceBase.map {
+                ($0 + y * confidenceRowBytes).assumingMemoryBound(to: UInt8.self)
+            }
+            for x in stride(from: 0, to: width, by: 2) {
+                if let confidenceRow, confidenceRow[x] < UInt8(ARConfidenceLevel.medium.rawValue) { continue }
+                let depth = depthRow[x]
+                if depth.isFinite, depth > minRange, depth < maxRange {
+                    cells[(x * rows / width) * cols + col].append(depth)
+                }
+            }
+        }
+
+        var result = empty
+        for row in 0..<rows {
+            for col in 0..<cols {
+                var samples = cells[row * cols + col]
+                guard samples.count >= minSamples else { continue }
+                samples.sort()
+                result[row][col] = samples[Int(Double(samples.count) * percentile)]
+            }
+        }
+        return result
+    }
 }

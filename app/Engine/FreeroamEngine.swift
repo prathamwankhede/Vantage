@@ -59,6 +59,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     private var flipWarned = false
     private var motionSample: (time: TimeInterval, position: SIMD2<Float>)?
     private var lastWalkingTime: TimeInterval = 0
+    private var walkingSpeedMeasured: Float = 0
     /// Horizontal speed that counts as walking (a slow walk is ~0.8 m/s; chest sway stays well below).
     private let walkingSpeed: Float = 0.3
     /// How long below walking speed before we treat the wearer as standing still.
@@ -185,7 +186,8 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         let elapsed = frame.timestamp - sample.time
         guard elapsed >= 0.5 else { return }
         motionSample = (frame.timestamp, position)
-        if simd_distance(position, sample.position) / Float(elapsed) > walkingSpeed {
+        walkingSpeedMeasured = simd_distance(position, sample.position) / Float(elapsed)
+        if walkingSpeedMeasured > walkingSpeed {
             lastWalkingTime = frame.timestamp
         }
         isMoving = frame.timestamp - lastWalkingTime < stillAfter
@@ -460,8 +462,65 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             return
         }
         caption = "Thinking…"
-        let reply = await SceneAI.answer(question, jpeg: snap.jpeg, frame: frame)
+        let reply = await SceneAI.answer(question, jpeg: snap.jpeg, frame: frame, context: sceneContext(for: frame))
         say(reply, interrupt: true)
+    }
+
+    /// Everything the phone knows right now, for the model prompt.
+    func sceneContext(for frame: ARFrame? = nil) -> SceneContext {
+        let frame = frame ?? currentFrame ?? session.currentFrame
+
+        var nearest: SceneContext.Nearest?
+        var labels: [String] = []
+        var depthGrid: [[Float?]]?
+        var pitch: Float?
+        var tracking = "unavailable"
+        if let frame {
+            labels = SceneLabels.classify(frame)
+            if let depth = frame.sceneDepth { depthGrid = DepthZoneAnalyzer.grid(in: depth) }
+
+            if let zone = Zone.allCases.min(by: { distances[$0.rawValue] < distances[$1.rawValue] }),
+               distances[zone.rawValue] < SceneContext.maxRange * 0.99 {
+                let reading = frame.sceneDepth.map { DepthZoneAnalyzer.nearestPerZone(in: $0) }
+                    ?? MonocularDistanceEstimator.nearestPerZone(in: frame)
+                let point = reading.points[zone.rawValue] ?? SIMD2(0.5, 0.5)
+                nearest = .init(zone: zone, distance: distances[zone.rawValue],
+                                name: ObstacleNamer.name(in: frame, at: point))
+            }
+
+            // Camera looks down its -Z axis; its world-space y component is the tilt.
+            let forward = -frame.camera.transform.columns.2
+            pitch = asin(max(-1, min(1, forward.y))) * 180 / .pi
+
+            switch frame.camera.trackingState {
+            case .normal: tracking = "good"
+            case .notAvailable: tracking = "unavailable"
+            case .limited(let reason):
+                switch reason {
+                case .excessiveMotion: tracking = "limited (moving fast)"
+                case .insufficientFeatures: tracking = "limited (few visual features, maybe dark or blank wall)"
+                case .initializing, .relocalizing: tracking = "starting up"
+                @unknown default: tracking = "limited"
+                }
+            }
+        }
+
+        return SceneContext(
+            mode: mode,
+            goal: mode == .navigate ? navigateGoal : nil,
+            lastStep: mode == .navigate ? navigateStepText : nil,
+            usesLiDAR: frame?.sceneDepth != nil,
+            zoneDistances: distances,
+            depthGrid: depthGrid,
+            nearest: nearest,
+            isMoving: isMoving,
+            speed: walkingSpeedMeasured,
+            cameraPitchDegrees: pitch,
+            tracking: tracking,
+            ambientIntensity: frame?.lightEstimate.map { Float($0.ambientIntensity) },
+            labels: labels,
+            headphones: headphones.usingHeadphones ? headphones.statusLine : "phone speaker"
+        )
     }
 
     private func nameNearest() async {

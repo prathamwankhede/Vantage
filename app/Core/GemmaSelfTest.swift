@@ -8,19 +8,40 @@ enum GemmaSelfTest {
     static func runIfRequested() {
         guard ProcessInfo.processInfo.arguments.contains("-GemmaSelfTest") else { return }
         Task {
+            let sensors = sampleContext.promptText
+            print("GEMMA-SELFTEST sensors:\n\(sensors)")
+
             var started = Date()
-            let text = await GemmaClient.answer(question: "What's ahead?", sceneSummary: "Chair, Door")
+            let text = await GemmaClient.answer(question: "What's ahead?", sensors: sensors)
             print("GEMMA-SELFTEST status: \(GemmaClient.status.label)")
             print("GEMMA-SELFTEST text (\(seconds(since: started))s): \(text ?? "nil")")
 
             started = Date()
             let vision = await GemmaClient.answer(
-                question: "What does the sign ahead say?",
-                sceneSummary: "Sign",
+                question: "What does the sign ahead say, and how far is it?",
+                sensors: sensors,
                 jpeg: signImage()
             )
             print("GEMMA-SELFTEST vision (\(seconds(since: started))s): \(vision ?? "nil")")
         }
+    }
+
+    /// A typical indoor reading: chair close on the left, sign about 3 m ahead.
+    private static var sampleContext: SceneContext {
+        SceneContext(
+            mode: .freeroam,
+            usesLiDAR: true,
+            zoneDistances: SIMD3(0.9, 3.1, 5),
+            depthGrid: [[2.4, 3.1, nil], [0.9, 3.1, nil], [0.8, 1.2, 1.3]],
+            nearest: .init(zone: .left, distance: 0.9, name: "Chair"),
+            isMoving: false,
+            speed: 0,
+            cameraPitchDegrees: -12,
+            tracking: "good",
+            ambientIntensity: 820,
+            labels: ["Chair", "Sign"],
+            headphones: "phone speaker"
+        )
     }
 
     private static func seconds(since date: Date) -> String {

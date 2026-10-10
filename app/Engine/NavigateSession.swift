@@ -49,7 +49,9 @@ final class NavigateSession: ObservableObject {
         defer { busy = false }
 
         do {
-            let step = try await GeminiClient.navigateStep(goal: goal, lastStep: lastStep, in: jpeg)
+            let step = try await GeminiClient.navigateStep(
+                goal: goal, lastStep: lastStep, in: jpeg, sensors: engine.sceneContext().promptText
+            )
             lastStep = step.spoken
             engine.updateNavigateStep(step.spoken)
             engine.setNavigateBearing(step.zoneHint)
