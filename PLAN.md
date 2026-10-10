@@ -6,7 +6,9 @@
 
 **Tagline:** *Know what’s ahead. Move with confidence.*
 
-**v1 non-goals:** MapKit, place learning / environment maps, a real on-device Gemma LLM, turn-by-turn GPS, hand-to-object find/grab pipelines.
+**v1 non-goals:** MapKit, place learning / environment maps, turn-by-turn GPS, hand-to-object find/grab pipelines.
+
+**On-device LLM:** Gemma via Google LiteRT-LM (`.litertlm` in `app/Models/` — see `scripts/download_gemma.sh`).
 
 ```mermaid
 flowchart TD
@@ -77,11 +79,11 @@ Screens: Loading → Home → Main → active session.
 
 Bundle ID: `com.vantage.app`. Secrets: `Secrets.swift.example` (Gemini + ElevenLabs).
 
-## Offline answers (not Gemma)
+## Offline answers (Gemma)
 
-v1 does **not** ship a real Gemma (or other) on-device LLM.
+When Gemini is offline or fails, `SceneAI` calls **on-device Gemma** (`GemmaClient` + LiteRT-LM). The model gets Apple Vision scene labels (and a JPEG when the `.litertlm` build supports vision). If the model file is missing, `OfflineAnswers` templates are the last resort.
 
-When Gemini is offline or fails, `OfflineAnswers` uses Apple Vision classifications and short template replies so the app still answers. A true bundled Gemma / MediaPipe LLM can replace that later without changing the `SceneAI` call site.
+Weights are **not** in git — download with `scripts/download_gemma.sh`.
 
 ## Non-Pro phones
 
@@ -102,7 +104,8 @@ When LiDAR is unavailable, `MonocularDistanceEstimator` uses Apple Vision (peopl
 - [x] Navigate Gemini step loop; depth always underneath
 - [x] Voice ask path, quiet mode, announce hysteresis
 - [x] README + phrase generator script
-- [ ] Optional later: real on-device LLM, custom CV depth model, richer phrase bank audio
+- [x] On-device Gemma (LiteRT-LM) with download script
+- [ ] Optional later: custom CV depth model, richer phrase bank audio
 
 ## Accuracy / overwhelm rules
 

@@ -18,7 +18,7 @@ Vantage is not a replacement for a white cane or a guide dog.
 
 ## Built with
 
-`Swift` `SwiftUI` `ARKit` `LiDAR` `Vision` `Core Motion` `Core Haptics` `Speech` `ElevenLabs` `Google Gemini` `XcodeGen`
+`Swift` `SwiftUI` `ARKit` `LiDAR` `Vision` `Core Motion` `Core Haptics` `Speech` `ElevenLabs` `Google Gemini` `Gemma` `LiteRT-LM` `XcodeGen`
 
 ## Run it
 
@@ -26,11 +26,14 @@ Needs a physical iPhone on iOS 17+ (LiDAR recommended). AirPods (or any headphon
 
 ```bash
 brew install xcodegen
+./scripts/download_gemma.sh              # on-device Gemma weights → app/Models/
 cd app
 cp Secrets.swift.example Secrets.swift   # add Gemini + ElevenLabs keys
 xcodegen generate
 open Vantage.xcodeproj
 ```
+
+Offline Q&A order: **Gemini (online) → Gemma on-device → Vision templates**.
 
 Optional offline phrase bank:
 

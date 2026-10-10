@@ -11,3 +11,11 @@ DerivedData/
 build/
 app/*.xcodeproj/
 !app/project.yml
+
+# On-device Gemma / LiteRT-LM weights (too large for git)
+*.litertlm
+*.bin
+app/Models/**
+!app/Models/README.md
+!app/Models/.gitkeep
+

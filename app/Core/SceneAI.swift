@@ -28,17 +28,24 @@ enum SceneAI {
         return pathSatisfied
     }
 
+    /// Online Gemini (vision) → on-device Gemma → short Vision templates.
     static func answer(_ question: String, jpeg: Data, frame: ARFrame?) async -> String {
         if isOnline {
             do {
                 return try await GeminiClient.answer(question, in: jpeg)
             } catch {
-                // Fall through to on-device templates.
+                // Fall through to Gemma.
             }
         }
+
+        let summary = frame.map { SceneLabels.summary(for: $0) } ?? "No camera labels."
+        if let gemma = await GemmaClient.answer(question: question, sceneSummary: summary, jpeg: jpeg) {
+            return gemma
+        }
+
         if let frame {
             return OfflineAnswers.answer(question, in: frame)
         }
-        return "I can't reach the internet right now, but I'm still watching for obstacles."
+        return "I can't reach the internet right now, and Gemma isn't loaded yet."
     }
 }

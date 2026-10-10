@@ -3,10 +3,17 @@ options:
   bundleIdPrefix: com.vantage
   deploymentTarget:
     iOS: "17.0"
+packages:
+  LiteRTLM:
+    url: https://github.com/google-ai-edge/LiteRT-LM
+    from: 0.12.0
 targets:
   Vantage:
     type: application
     platform: iOS
+    dependencies:
+      - package: LiteRTLM
+        product: LiteRTLM
     sources:
       - path: .
         excludes:
@@ -16,6 +23,8 @@ targets:
           - "*.xcodeproj"
           - build
           - Secrets.swift.example
+          - Models/.gitkeep
+          - Models/README.md
     info:
       path: Info.plist
       properties:
