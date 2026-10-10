@@ -12,6 +12,9 @@ struct VantageApp: App {
                     LoadingScreen()
                         .task {
                             GemmaClient.preload()
+                            #if DEBUG
+                            GemmaSelfTest.runIfRequested()
+                            #endif
                             try? await Task.sleep(nanoseconds: 1_100_000_000)
                             withAnimation(.easeInOut(duration: 0.35)) { phase = .home }
                         }

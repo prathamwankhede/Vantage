@@ -8,6 +8,7 @@ struct MainScreen: View {
     @State private var showGoalSheet = false
     @State private var goalText = "the exit"
     @State private var appeared = false
+    @State private var gemmaStatus = GemmaClient.status.label
     @StateObject private var listener = ModeVoiceBridge()
 
     var body: some View {
@@ -63,6 +64,10 @@ struct MainScreen: View {
                 .opacity(appeared ? 1 : 0)
 
                 Spacer()
+
+                Text(gemmaStatus)
+                    .font(Brand.statusFont)
+                    .foregroundStyle(Brand.creamMuted)
             }
             .padding(.horizontal, 24)
             .padding(.bottom, 24)
@@ -100,6 +105,9 @@ struct MainScreen: View {
             if !showFreeroam, !showNavigate { Speaker.shared.stop() }
         }
         .navigationBarBackButtonHidden(true)
+        .onReceive(NotificationCenter.default.publisher(for: GemmaClient.statusChanged)) { _ in
+            gemmaStatus = GemmaClient.status.label
+        }
     }
 
     private func modeCard(

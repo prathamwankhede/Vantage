@@ -26,8 +26,11 @@ targets:
           - SETUP.md
           - "*.xcconfig"
           - Local.xcconfig.example
-          - Models/.gitkeep
-          - Models/README.md
+          - Models
+      # Folder reference: whatever .litertlm is in Models/ ships as Models/<file>, no regenerate needed.
+      - path: Models
+        type: folder
+        buildPhase: resources
     configFiles:
       Debug: Signing.xcconfig
       Release: Signing.xcconfig

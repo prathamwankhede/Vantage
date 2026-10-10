@@ -81,7 +81,7 @@ Bundle ID: `com.vantage.app`. Secrets: `Secrets.swift.example` (Gemini + ElevenL
 
 ## Offline answers (Gemma)
 
-When Gemini is offline or fails, `SceneAI` calls **on-device Gemma** (`GemmaClient` + LiteRT-LM). The model gets Apple Vision scene labels (and a JPEG when the `.litertlm` build supports vision). If the model file is missing, `OfflineAnswers` templates are the last resort.
+When Gemini is offline or fails, `SceneAI` calls **on-device Gemma** (`GemmaClient` + LiteRT-LM). The model sees the camera JPEG plus Apple Vision scene labels (vision encoder on CPU; language model on GPU, falling back to CPU). If the model file is missing, `OfflineAnswers` templates are the last resort.
 
 Weights are **not** in git — download with `scripts/download_gemma.sh`.
 

@@ -28,5 +28,8 @@ if [[ ! -f "$OUT/$FILE" ]]; then
   fi
 fi
 
+# Models/ is bundled as a folder reference — drop the hub's download cache so it doesn't ship.
+rm -rf "$OUT/.cache"
+
 echo "Done. Set Secrets.gemmaModelFileName = \"$FILE\" if needed."
-echo "Regenerate Xcode project so Models is bundled: cd app && xcodegen generate"
+echo "Rebuild in Xcode; the model ships inside the app as Models/$FILE."
