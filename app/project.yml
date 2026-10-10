@@ -53,6 +53,7 @@ targets:
       base:
         # PRODUCT_BUNDLE_IDENTIFIER and DEVELOPMENT_TEAM come from Signing.xcconfig / Local.xcconfig.
         PRODUCT_NAME: Vantage
+        SWIFT_OBJC_BRIDGING_HEADER: Vantage-Bridging-Header.h
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"
         ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon

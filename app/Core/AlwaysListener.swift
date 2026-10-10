@@ -8,7 +8,7 @@ final class AlwaysListener: NSObject {
     var onUtterance: ((String) -> Void)?
     var onWake: (() -> Void)?
 
-    private let audioEngine = AVAudioEngine()
+    private var audioEngine = AVAudioEngine()
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
@@ -81,13 +81,25 @@ final class AlwaysListener: NSObject {
 
         let input = audioEngine.inputNode
         let format = input.outputFormat(forBus: 0)
-        guard format.sampleRate > 0 else {
+        guard format.sampleRate > 0, format.channelCount > 0 else {
             scheduleRestart(after: 500_000_000)
             return
         }
         input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            request.append(buffer)
+        do {
+            // installTap raises an Objective-C exception (uncatchable in Swift) when the audio
+            // session changed under a cached input format. Rebuild the engine and retry instead.
+            try ObjCException.catching {
+                input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
+                    request.append(buffer)
+                }
+            }
+        } catch {
+            print("AlwaysListener: installTap failed, rebuilding audio engine: \(error.localizedDescription)")
+            endSession()
+            audioEngine = AVAudioEngine()
+            scheduleRestart(after: 500_000_000)
+            return
         }
 
         audioEngine.prepare()
