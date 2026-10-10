@@ -15,19 +15,12 @@ struct VantageApp: App {
                             #if DEBUG
                             GemmaSelfTest.runIfRequested()
                             #endif
-                            try? await Task.sleep(nanoseconds: 1_100_000_000)
-                            withAnimation(.easeInOut(duration: 0.35)) { phase = .home }
+                            try? await Task.sleep(nanoseconds: 600_000_000)
+                            withAnimation(.easeInOut(duration: 0.3)) { phase = .main }
                         }
-                case .home:
-                    HomeScreen {
-                        withAnimation(.easeInOut(duration: 0.3)) { phase = .main }
-                    }
                 case .main:
-                    NavigationStack {
-                        MainScreen {
-                            withAnimation(.easeInOut(duration: 0.3)) { phase = .home }
-                        }
-                    }
+                    // Straight to the talking mode menu — no "continue" step in between.
+                    MainScreen()
                 }
             }
             .preferredColorScheme(.dark)
@@ -36,5 +29,5 @@ struct VantageApp: App {
 }
 
 private enum AppPhase {
-    case loading, home, main
+    case loading, main
 }

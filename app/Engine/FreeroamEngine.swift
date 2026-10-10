@@ -28,6 +28,8 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var mode: Mode = .freeroam
     /// Walking, from ARKit's tracked position. Spoken directions are only useful while moving.
     @Published private(set) var isMoving = false
+    /// Called when the wearer asks to leave ("Vantage, go back"); the screen dismisses itself.
+    var onExitRequested: (() -> Void)?
     /// Optional LiDAR night-vision depth image (full frame, not L/C/R bars).
     @Published private(set) var nightVisionImage: CGImage?
 
@@ -105,8 +107,10 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         Task {
             try? await Task.sleep(nanoseconds: 700_000_000)
             let line = mode == .navigate
-                ? "Navigate mode. I'll guide you toward \(goal) using what I can see. Say next when you're ready for another step."
-                : "Freeroam. Haptics watch the path. Say Vantage when you need me."
+                ? "Navigating to \(goal). I'll guide you using what I can see. Say Vantage, next, for another step, "
+                    + "or Vantage, go back, for the main menu."
+                : "Freeroam. Vibrations watch the path. Say Vantage to ask me something, "
+                    + "or Vantage, go back, for the main menu."
             self.say(line, interrupt: true)
         }
     }
@@ -395,6 +399,17 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     /// Settings / mode toggles handled on-device with bundled or system TTS only.
     @discardableResult
     private func handleLocalCommand(_ lowered: String) -> Bool {
+        // Leave the session by voice. Specific phrases only — "exit" alone could be a question
+        // about an exit door.
+        if ["go back", "main menu", "end session", "stop session", "change mode", "switch mode", "leave"]
+            .contains(where: lowered.hasPrefix) {
+            say("Going back to the main menu.", interrupt: true, allowNetwork: false)
+            Task { @MainActor in
+                await speaker.waitUntilIdle(timeout: 4)
+                onExitRequested?()
+            }
+            return true
+        }
         if matchesNightVision(lowered) {
             applyNightVisionCommand(lowered)
             return true

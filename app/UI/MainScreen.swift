@@ -1,208 +1,466 @@
+import AVFoundation
+import Speech
 import SwiftUI
+import UIKit
 
+/// Where the mode screen can send you.
+enum VantageRoute: Hashable {
+    case freeroam
+    case destination
+    case navigate(goal: String)
+}
+
+/// First screen. Speaks as soon as it appears and listens for a mode; the two halves of the
+/// screen are also big tap targets, so it works by voice, by touch, or with VoiceOver.
 struct MainScreen: View {
-    var onBack: () -> Void
-
-    @State private var showFreeroam = false
-    @State private var showNavigate = false
-    @State private var showGoalSheet = false
-    @State private var goalText = "the exit"
-    @State private var appeared = false
+    @State private var path: [VantageRoute] = []
+    @State private var listening = false
+    @State private var hasGreeted = false
+    @State private var remindedThisVisit = false
+    @State private var voiceTask: Task<Void, Never>?
     @State private var gemmaStatus = GemmaClient.status.label
-    @StateObject private var listener = ModeVoiceBridge()
+    @State private var showSettings = false
+    @StateObject private var voice = VoiceCommandBridge()
 
     var body: some View {
-        ZStack {
-            Brand.inkElevated.ignoresSafeArea()
-            RadialGradient(
-                colors: [Brand.teal.opacity(0.22), .clear],
-                center: .topTrailing,
-                startRadius: 20,
-                endRadius: 380
+        NavigationStack(path: $path) {
+            menu
+                .navigationDestination(for: VantageRoute.self) { route in
+                    switch route {
+                    case .freeroam:
+                        SessionScreen(mode: .freeroam, goal: "")
+                    case .destination:
+                        DestinationScreen { goal in path = [.navigate(goal: goal)] }
+                    case .navigate(let goal):
+                        SessionScreen(mode: .navigate, goal: goal)
+                    }
+                }
+        }
+    }
+
+    private var menu: some View {
+        VStack(spacing: 14) {
+            header
+            ListeningIndicator(
+                listening: listening,
+                text: listening ? "Say “Freeroam” or “Navigate”" : "Vantage is speaking"
             )
-            .ignoresSafeArea()
-
-            VStack(alignment: .leading, spacing: 28) {
-                Button(action: onBack) {
-                    Image(systemName: "chevron.left")
-                        .font(.system(size: 18, weight: .semibold))
-                        .foregroundStyle(Brand.cream)
-                        .frame(width: 48, height: 48)
-                        .background(.ultraThinMaterial, in: Circle())
-                }
-                .padding(.top, 8)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    Text("How can Vantage help?")
-                        .font(.system(size: 34, weight: .heavy, design: .rounded))
-                        .foregroundStyle(Brand.cream)
-                    Text("Freeroam is haptics-only while you walk. Navigate talks you through a place using what the camera sees — no map.")
-                        .font(Brand.bodyFont)
-                        .foregroundStyle(Brand.creamMuted)
-                }
-
-                Spacer(minLength: 12)
-
-                modeCard(
-                    title: "Freeroam",
-                    subtitle: "Haptics watch the path",
-                    systemImage: "iphone.radiowaves.left.and.right"
-                ) {
-                    showFreeroam = true
-                }
-                .offset(y: appeared ? 0 : 40)
-                .opacity(appeared ? 1 : 0)
-
-                modeCard(
-                    title: "Navigate",
-                    subtitle: "Landmark steps to a goal",
-                    systemImage: "eye.trianglebadge.exclamationmark"
-                ) {
-                    showGoalSheet = true
-                }
-                .offset(y: appeared ? 0 : 56)
-                .opacity(appeared ? 1 : 0)
-
-                Spacer()
-
-                Text(gemmaStatus)
-                    .font(Brand.statusFont)
-                    .foregroundStyle(Brand.creamMuted)
+            ModeCard(
+                title: "Freeroam",
+                subtitle: "Walk freely. Vibrations warn you about obstacles.",
+                systemImage: "figure.walk",
+                fill: Brand.teal
+            ) {
+                choose(.freeroam)
             }
-            .padding(.horizontal, 24)
-            .padding(.bottom, 24)
-        }
-        .navigationDestination(isPresented: $showFreeroam) {
-            SessionScreen(mode: .freeroam, goal: "")
-        }
-        .navigationDestination(isPresented: $showNavigate) {
-            SessionScreen(mode: .navigate, goal: goalText)
-        }
-        .sheet(isPresented: $showGoalSheet) {
-            NavigateGoalSheet(goal: $goalText) {
-                showGoalSheet = false
-                showNavigate = true
+            ModeCard(
+                title: "Navigate",
+                subtitle: "Tell me where to go. I'll guide you using the camera.",
+                systemImage: "arrow.triangle.turn.up.right.diamond.fill",
+                fill: Brand.cream
+            ) {
+                choose(.destination)
             }
-            .presentationDetents([.medium])
+            Text(gemmaStatus)
+                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .foregroundStyle(Brand.creamMuted)
         }
-        .onAppear {
-            withAnimation(.spring(duration: 0.85, bounce: 0.2).delay(0.05)) { appeared = true }
-            Task {
-                try? await Task.sleep(nanoseconds: 400_000_000)
-                Speaker.shared.say(
-                    "Are you freeroaming, or do you want to navigate somewhere?",
-                    interrupt: true
-                )
-                await Speaker.shared.waitUntilIdle()
-                await listener.listen(
-                    onFreeroam: { showFreeroam = true },
-                    onNavigate: { showGoalSheet = true }
-                )
-            }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 4)
+        .background(Brand.ink.ignoresSafeArea())
+        .toolbar(.hidden, for: .navigationBar)
+        .sheet(isPresented: $showSettings) {
+            NavigationStack { DetectionSettingsScreen() }
+                .preferredColorScheme(.dark)
         }
-        .onDisappear {
-            listener.stop()
-            if !showFreeroam, !showNavigate { Speaker.shared.stop() }
-        }
-        .navigationBarBackButtonHidden(true)
+        .onAppear(perform: greet)
+        .onDisappear(perform: stopVoice)
         .onReceive(NotificationCenter.default.publisher(for: GemmaClient.statusChanged)) { _ in
             gemmaStatus = GemmaClient.status.label
         }
     }
 
-    private func modeCard(
-        title: String,
-        subtitle: String,
-        systemImage: String,
-        action: @escaping () -> Void
-    ) -> some View {
-        Button(action: action) {
-            HStack(spacing: 18) {
-                Image(systemName: systemImage)
-                    .font(.system(size: 28, weight: .semibold))
-                    .foregroundStyle(Brand.ink)
-                    .frame(width: 56, height: 56)
-                    .background(Brand.cream, in: RoundedRectangle(cornerRadius: 16, style: .continuous))
-                VStack(alignment: .leading, spacing: 4) {
-                    Text(title)
-                        .font(.system(size: 24, weight: .bold, design: .rounded))
-                        .foregroundStyle(Brand.cream)
-                    Text(subtitle)
-                        .font(Brand.statusFont)
-                        .foregroundStyle(Brand.creamMuted)
-                }
-                Spacer()
-                Image(systemName: "arrow.right")
-                    .foregroundStyle(Brand.teal)
+    private var header: some View {
+        HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Vantage")
+                    .font(.system(size: 34, weight: .heavy, design: .rounded))
+                    .foregroundStyle(Brand.cream)
+                Text(Brand.tagline)
+                    .font(.system(size: 15, weight: .medium, design: .rounded))
+                    .foregroundStyle(Brand.creamMuted)
             }
-            .padding(22)
-            .background(
-                RoundedRectangle(cornerRadius: 26, style: .continuous)
-                    .fill(Brand.ink)
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 26, style: .continuous)
-                            .stroke(Brand.teal.opacity(0.35), lineWidth: 1.5)
-                    )
-            )
+            .accessibilityElement(children: .combine)
+            .accessibilityAddTraits(.isHeader)
+            Spacer()
+            Button {
+                showSettings = true
+            } label: {
+                Image(systemName: "gearshape.fill")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Brand.cream)
+                    .frame(width: 52, height: 52)
+                    .background(Brand.inkElevated, in: Circle())
+            }
+            .accessibilityLabel("Settings")
         }
-        .buttonStyle(.plain)
+    }
+
+    // MARK: - Voice
+
+    private func greet() {
+        remindedThisVisit = false
+        let line = hasGreeted
+            ? "Main menu. Say Freeroam, or Navigate."
+            : "Welcome to Vantage. Say Freeroam to walk with vibration warnings, or Navigate to be guided "
+                + "somewhere. You can also tap the top or bottom half of the screen."
+        hasGreeted = true
+        voiceTask?.cancel()
+        voiceTask = Task { @MainActor in
+            await VoicePermissions.request()
+            await speakThenListen(line)
+        }
+    }
+
+    private func speakThenListen(_ line: String) async {
+        voice.stop()
+        listening = false
+        // Before speaking: the default audio session obeys the silent switch, so the greeting was muted.
+        try? Speaker.configureAudioSession()
+        Speaker.shared.say(line, interrupt: true)
+        await Speaker.shared.waitUntilIdle(timeout: 25)
+        guard !Task.isCancelled else { return }
+        listening = true
+        voice.start { text in handle(text) }
+        scheduleReminder()
+    }
+
+    /// One short reminder if nothing is chosen for a while.
+    private func scheduleReminder() {
+        guard !remindedThisVisit else { return }
+        remindedThisVisit = true
+        Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 20_000_000_000)
+            guard path.isEmpty, listening else { return }
+            voiceTask?.cancel()
+            voiceTask = Task { @MainActor in await speakThenListen("Say Freeroam, or Navigate.") }
+        }
+    }
+
+    private func handle(_ text: String) {
+        guard path.isEmpty else { return }
+        switch VoiceIntent.mode(from: text) {
+        case .freeroam:
+            choose(.freeroam)
+        case .navigate(let goal?):
+            choose(.navigate(goal: goal))
+        case .navigate(nil):
+            choose(.destination)
+        case nil:
+            voiceTask?.cancel()
+            voiceTask = Task { @MainActor in
+                await speakThenListen("Sorry, I didn't catch that. Say Freeroam, or Navigate.")
+            }
+        }
+    }
+
+    private func choose(_ route: VantageRoute) {
+        stopVoice()
+        Speaker.shared.stop()
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        path.append(route)
+    }
+
+    private func stopVoice() {
+        voiceTask?.cancel()
+        voiceTask = nil
+        voice.stop()
+        listening = false
     }
 }
 
-struct NavigateGoalSheet: View {
-    @Binding var goal: String
-    var onStart: () -> Void
+// MARK: - Mode card
 
-    private let suggestions = ["the exit", "the front desk", "the elevator", "the pharmacy", "room 214"]
+/// Half-screen button: one per mode, so either half of the screen is an easy target.
+private struct ModeCard: View {
+    let title: String
+    let subtitle: String
+    let systemImage: String
+    let fill: Color
+    let action: () -> Void
 
     var body: some View {
-        NavigationStack {
-            VStack(alignment: .leading, spacing: 20) {
-                Text("Where are you going?")
-                    .font(.system(size: 28, weight: .heavy, design: .rounded))
-                TextField("Destination", text: $goal)
-                    .textFieldStyle(.roundedBorder)
-                    .font(Brand.bodyFont)
-                ScrollView(.horizontal, showsIndicators: false) {
-                    HStack {
-                        ForEach(suggestions, id: \.self) { item in
-                            Button(item) { goal = item }
-                                .buttonStyle(.bordered)
-                        }
-                    }
-                }
-                Button(action: onStart) {
-                    Text("Start Navigate")
-                        .font(.system(size: 18, weight: .bold, design: .rounded))
-                        .frame(maxWidth: .infinity)
-                        .padding(.vertical, 14)
-                }
-                .buttonStyle(.borderedProminent)
-                .tint(Brand.tealDeep)
-                Spacer()
+        Button(action: action) {
+            VStack(alignment: .leading, spacing: 8) {
+                Image(systemName: systemImage)
+                    .font(.system(size: 32, weight: .bold))
+                    .frame(width: 64, height: 64)
+                    .background(Brand.ink.opacity(0.1), in: Circle())
+                Spacer(minLength: 8)
+                Text(title)
+                    .font(.system(size: 44, weight: .heavy, design: .rounded))
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                Text(subtitle)
+                    .font(.system(size: 18, weight: .semibold, design: .rounded))
+                    .opacity(0.75)
+                    .fixedSize(horizontal: false, vertical: true)
             }
+            .foregroundStyle(Brand.ink)
             .padding(24)
-            .navigationTitle("Navigate")
-            .navigationBarTitleDisplayMode(.inline)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+            .background(fill, in: RoundedRectangle(cornerRadius: 32, style: .continuous))
+            .contentShape(RoundedRectangle(cornerRadius: 32, style: .continuous))
         }
+        .buttonStyle(PressableButtonStyle())
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(title)
+        .accessibilityHint(subtitle)
+        .accessibilityAddTraits(.isButton)
     }
 }
 
-@MainActor
-private final class ModeVoiceBridge: ObservableObject {
-    private let listener = AlwaysListener()
+struct PressableButtonStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        configuration.label
+            .scaleEffect(configuration.isPressed ? 0.97 : 1)
+            .animation(.easeOut(duration: 0.15), value: configuration.isPressed)
+    }
+}
 
-    func listen(onFreeroam: @escaping () -> Void, onNavigate: @escaping () -> Void) async {
-        listener.onUtterance = { text in
-            let lower = text.lowercased()
-            if ["freeroam", "free roam", "roam", "watch"].contains(where: { lower.contains($0) }) {
-                onFreeroam()
-            } else if ["navigate", "navigation", "go to", "find the way", "guide"].contains(where: { lower.contains($0) }) {
-                onNavigate()
+// MARK: - Destination
+
+/// Asks "where to?" out loud and listens; suggestions and typing are there as backups.
+struct DestinationScreen: View {
+    var onGoal: (String) -> Void
+
+    @Environment(\.dismiss) private var dismiss
+    @State private var typed = ""
+    @State private var listening = false
+    @State private var voiceTask: Task<Void, Never>?
+    @StateObject private var voice = VoiceCommandBridge()
+
+    private let suggestions = ["the exit", "the front desk", "the elevator", "the restroom", "the stairs"]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Button {
+                dismiss()
+            } label: {
+                Image(systemName: "chevron.left")
+                    .font(.system(size: 20, weight: .semibold))
+                    .foregroundStyle(Brand.cream)
+                    .frame(width: 52, height: 52)
+                    .background(Brand.inkElevated, in: Circle())
+            }
+            .accessibilityLabel("Back to main menu")
+
+            Text("Where to?")
+                .font(.system(size: 44, weight: .heavy, design: .rounded))
+                .foregroundStyle(Brand.cream)
+                .accessibilityAddTraits(.isHeader)
+
+            ListeningIndicator(
+                listening: listening,
+                text: listening ? "Say a place, like “the front desk”" : "Vantage is speaking"
+            )
+
+            ScrollView {
+                VStack(spacing: 10) {
+                    ForEach(suggestions, id: \.self) { place in
+                        Button {
+                            go(place)
+                        } label: {
+                            HStack {
+                                Text(place.prefix(1).uppercased() + place.dropFirst())
+                                    .font(.system(size: 22, weight: .semibold, design: .rounded))
+                                Spacer()
+                                Image(systemName: "arrow.right")
+                                    .font(.system(size: 18, weight: .bold))
+                            }
+                            .foregroundStyle(Brand.cream)
+                            .padding(.horizontal, 20)
+                            .frame(maxWidth: .infinity, minHeight: 64)
+                            .background(Brand.inkElevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                        }
+                        .buttonStyle(PressableButtonStyle())
+                        .accessibilityLabel("Navigate to \(place)")
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+
+            HStack(spacing: 10) {
+                TextField("Or type a place", text: $typed)
+                    .font(.system(size: 20, weight: .medium, design: .rounded))
+                    .foregroundStyle(Brand.cream)
+                    .padding(.horizontal, 18)
+                    .frame(height: 60)
+                    .background(Brand.inkElevated, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                    .submitLabel(.go)
+                    .onSubmit { go(typed) }
+                Button {
+                    go(typed)
+                } label: {
+                    Text("Go")
+                        .font(.system(size: 20, weight: .bold, design: .rounded))
+                        .foregroundStyle(Brand.ink)
+                        .frame(width: 76, height: 60)
+                        .background(Brand.teal, in: RoundedRectangle(cornerRadius: 20, style: .continuous))
+                }
+                .disabled(typed.trimmingCharacters(in: .whitespaces).isEmpty)
+                .accessibilityLabel("Start navigating")
             }
         }
+        .padding(.horizontal, 16)
+        .padding(.top, 8)
+        .padding(.bottom, 8)
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .background(Brand.ink.ignoresSafeArea())
+        .toolbar(.hidden, for: .navigationBar)
+        .onAppear {
+            voiceTask = Task { @MainActor in
+                await speakThenListen("Where do you want to go? For example, the front desk, or the exit.")
+            }
+        }
+        .onDisappear(perform: stopVoice)
+    }
+
+    private func speakThenListen(_ line: String) async {
+        voice.stop()
+        listening = false
+        try? Speaker.configureAudioSession()
+        Speaker.shared.say(line, interrupt: true)
+        await Speaker.shared.waitUntilIdle(timeout: 15)
+        guard !Task.isCancelled else { return }
+        listening = true
+        voice.start { text in handle(text) }
+    }
+
+    private func handle(_ text: String) {
+        if VoiceIntent.isCancel(text) {
+            stopVoice()
+            dismiss()
+            return
+        }
+        if let goal = VoiceIntent.destination(in: text) {
+            go(goal)
+        }
+    }
+
+    private func go(_ place: String) {
+        let goal = place.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !goal.isEmpty else { return }
+        stopVoice()
+        Speaker.shared.stop()
+        UIImpactFeedbackGenerator(style: .medium).impactOccurred()
+        onGoal(goal)
+    }
+
+    private func stopVoice() {
+        voiceTask?.cancel()
+        voiceTask = nil
+        voice.stop()
+        listening = false
+    }
+}
+
+// MARK: - Voice helpers
+
+/// Listens without needing the wake word — for menus where Vantage just asked a question.
+@MainActor
+final class VoiceCommandBridge: ObservableObject {
+    private let listener = AlwaysListener()
+
+    func start(onUtterance: @escaping (String) -> Void) {
+        listener.onUtterance = onUtterance
         listener.start()
     }
 
-    func stop() { listener.stop() }
+    func stop() {
+        listener.onUtterance = nil
+        listener.stop()
+    }
 }
+
+/// Mic and speech permission up front, so the very first voice menu can hear the answer.
+enum VoicePermissions {
+    @MainActor
+    static func request() async {
+        if SFSpeechRecognizer.authorizationStatus() == .notDetermined {
+            await withCheckedContinuation { continuation in
+                SFSpeechRecognizer.requestAuthorization { _ in continuation.resume() }
+            }
+        }
+        if AVAudioApplication.shared.recordPermission == .undetermined {
+            _ = await AVAudioApplication.requestRecordPermission()
+        }
+    }
+}
+
+/// Turns menu speech into a choice.
+enum VoiceIntent {
+    enum Mode: Equatable {
+        case freeroam
+        case navigate(goal: String?)
+    }
+
+    private static let destinationLeads = [
+        "i want to go to", "i need to go to", "navigate me to", "navigate to", "take me to",
+        "guide me to", "bring me to", "go to", "find the", "find"
+    ]
+
+    static func mode(from text: String) -> Mode? {
+        let lower = normalized(text)
+        // "Navigate to the front desk" → straight into Navigate.
+        for lead in destinationLeads where !lead.hasPrefix("find") {
+            if let range = lower.range(of: lead + " ") {
+                let goal = cleanGoal(String(lower[range.upperBound...]))
+                if !goal.isEmpty { return .navigate(goal: goal) }
+            }
+        }
+        if ["free roam", "freeroam", "free room", "free rome", "roam", "walk"].contains(where: lower.contains) {
+            return .freeroam
+        }
+        if ["navigate", "navigation", "guide", "take me", "directions", "destination"].contains(where: lower.contains) {
+            return .navigate(goal: nil)
+        }
+        return nil
+    }
+
+    /// The place in "take me to the front desk", or the whole phrase if there's no lead-in.
+    static func destination(in text: String) -> String? {
+        var lower = normalized(text)
+        if let lead = destinationLeads.first(where: { lower.hasPrefix($0 + " ") }) {
+            lower = String(lower.dropFirst(lead.count))
+        }
+        let goal = cleanGoal(lower)
+        return goal.isEmpty ? nil : goal
+    }
+
+    static func isCancel(_ text: String) -> Bool {
+        let lower = normalized(text)
+        return lower == "back" || ["cancel", "go back", "main menu", "never mind", "nevermind"]
+            .contains(where: lower.hasPrefix)
+    }
+
+    private static func normalized(_ text: String) -> String {
+        let trim = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters)
+        var lower = text.lowercased().trimmingCharacters(in: trim)
+        for wake in Brand.wakePhrases where lower.hasPrefix(wake) {
+            lower = String(lower.dropFirst(wake.count)).trimmingCharacters(in: trim)
+        }
+        return lower
+    }
+
+    private static func cleanGoal(_ text: String) -> String {
+        let trim = CharacterSet.whitespacesAndNewlines.union(.punctuationCharacters)
+        var goal = text.trimmingCharacters(in: trim)
+        for tail in [" please", " now"] where goal.hasSuffix(tail) {
+            goal = String(goal.dropLast(tail.count))
+        }
+        return goal.trimmingCharacters(in: trim)
+    }
+}
+

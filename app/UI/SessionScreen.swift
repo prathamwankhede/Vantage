@@ -28,27 +28,16 @@ struct SessionScreen: View {
                     .ignoresSafeArea()
             }
 
-            VStack {
+            VStack(spacing: 0) {
                 topBar
-                Spacer()
-                if !engine.caption.isEmpty {
-                    Text(engine.caption)
-                        .font(.system(size: 20, weight: .semibold, design: .rounded))
-                        .foregroundStyle(Brand.cream)
-                        .multilineTextAlignment(.center)
-                        .padding(.horizontal, 24)
-                        .shadow(color: .black.opacity(0.7), radius: 4, y: 1)
-                        .padding(.bottom, 12)
-                }
-                StatusBlob(
-                    title: distanceTitle,
-                    detail: statusDetail,
-                    accent: (engine.alert?.distance ?? 99) < AlertPolicy.stopDistance ? Brand.danger : Brand.tealDeep
-                )
-                .padding(.bottom, 36)
+                Spacer(minLength: 0)
+                statusPanel
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 8)
             }
         }
         .navigationBarBackButtonHidden(true)
+        .toolbar(.hidden, for: .navigationBar)
         .sheet(isPresented: $showSettings) {
             NavigationStack {
                 DetectionSettingsScreen()
@@ -57,6 +46,7 @@ struct SessionScreen: View {
         }
         .onAppear {
             UIApplication.shared.isIdleTimerDisabled = true
+            engine.onExitRequested = { dismiss() }
             engine.start(mode: mode, goal: goal)
         }
         .onDisappear {
@@ -68,37 +58,98 @@ struct SessionScreen: View {
         }
     }
 
+    // MARK: - Top bar
+
     private var topBar: some View {
-        HStack {
+        HStack(spacing: 10) {
             Button {
                 engine.stop()
                 dismiss()
             } label: {
-                Image(systemName: "chevron.left")
-                    .font(.system(size: 18, weight: .semibold))
+                Label("End", systemImage: "xmark")
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
                     .foregroundStyle(Brand.cream)
-                    .frame(width: 48, height: 48)
-                    .background(.ultraThinMaterial, in: Circle())
+                    .padding(.horizontal, 18)
+                    .frame(height: 52)
+                    .background(Brand.ink.opacity(0.85), in: Capsule())
             }
+            .accessibilityLabel("End \(modeTitle) and go back to the main menu")
+
             Spacer()
-            Text(mode == .navigate ? "Navigate" : "Freeroam")
-                .font(Brand.statusFont)
-                .foregroundStyle(Brand.cream)
-                .padding(.horizontal, 14)
-                .padding(.vertical, 8)
-                .background(.ultraThinMaterial, in: Capsule())
+
+            Text(modeTitle)
+                .font(.system(size: 17, weight: .bold, design: .rounded))
+                .foregroundStyle(Brand.ink)
+                .padding(.horizontal, 16)
+                .frame(height: 36)
+                .background(mode == .navigate ? Brand.cream : Brand.teal, in: Capsule())
+                .accessibilityAddTraits(.isHeader)
+
             Spacer()
+
             Button { showSettings = true } label: {
                 Image(systemName: "gearshape.fill")
-                    .font(.system(size: 18, weight: .semibold))
+                    .font(.system(size: 20, weight: .semibold))
                     .foregroundStyle(Brand.cream)
-                    .frame(width: 48, height: 48)
-                    .background(.ultraThinMaterial, in: Circle())
+                    .frame(width: 52, height: 52)
+                    .background(Brand.ink.opacity(0.85), in: Circle())
             }
             .accessibilityLabel("Detection settings")
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 12)
+        .padding(.horizontal, 12)
+        .padding(.top, 6)
+    }
+
+    private var modeTitle: String { mode == .navigate ? "Navigate" : "Freeroam" }
+
+    // MARK: - Status panel
+
+    /// The one status surface: distance, state, the current step, and what Vantage last said.
+    private var statusPanel: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(alignment: .center) {
+                Text(distanceTitle)
+                    .font(.system(size: 52, weight: .heavy, design: .rounded))
+                    .monospacedDigit()
+                    .foregroundStyle(Brand.cream)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.6)
+                Spacer(minLength: 8)
+                Text(stateLabel)
+                    .font(.system(size: 17, weight: .bold, design: .rounded))
+                    .foregroundStyle(Brand.ink)
+                    .padding(.horizontal, 14)
+                    .frame(height: 36)
+                    .background(stateColor, in: Capsule())
+            }
+
+            if mode == .navigate {
+                Text(engine.navigateStepText.isEmpty ? "Looking for landmarks…" : engine.navigateStepText)
+                    .font(.system(size: 22, weight: .bold, design: .rounded))
+                    .foregroundStyle(Brand.cream)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+
+            Text(statusDetail)
+                .font(.system(size: 15, weight: .medium, design: .rounded))
+                .foregroundStyle(Brand.creamMuted)
+                .lineLimit(2)
+
+            if !engine.caption.isEmpty {
+                Rectangle()
+                    .fill(Brand.cream.opacity(0.12))
+                    .frame(height: 1)
+                CaptionText(text: engine.caption)
+            }
+        }
+        .padding(20)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Brand.ink.opacity(0.94), in: RoundedRectangle(cornerRadius: 30, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: 30, style: .continuous)
+                .stroke(stateColor, lineWidth: 2)
+        )
+        .accessibilityElement(children: .combine)
     }
 
     private var distanceTitle: String {
@@ -107,31 +158,68 @@ struct SessionScreen: View {
         return "\(feet) ft"
     }
 
+    private var stateLabel: String {
+        guard let alert = engine.alert else { return "Path clear" }
+        let side: String
+        switch alert.zone {
+        case .left: side = "Left"
+        case .center: side = "Ahead"
+        case .right: side = "Right"
+        }
+        if alert.distance < AlertPolicy.stopDistance { return "Very close · \(side)" }
+        return "\(alert.band.rawValue.capitalized) · \(side)"
+    }
+
+    private var stateColor: Color {
+        guard let alert = engine.alert else { return Brand.clear }
+        if alert.distance < AlertPolicy.stopDistance { return Brand.danger }
+        switch alert.band {
+        case .near: return Brand.danger
+        case .medium: return Color(red: 0.98, green: 0.66, blue: 0.25)
+        case .far: return Brand.teal
+        }
+    }
+
     private var statusDetail: String {
-        if mode == .freeroam {
-            var parts = ["Haptics"]
-            parts.append(settings.alertMode.title)
-            if let alert = engine.alert {
-                parts.append(alert.band.rawValue.capitalized)
-            } else {
-                parts.append("Path clear")
-            }
-            if settings.nightVision { parts.append("Night Vision") }
-            return parts.joined(separator: " · ")
-        }
         var parts: [String] = []
-        if engine.quietMode { parts.append("Quiet") }
-        if let alert = engine.alert {
-            parts.append(alert.zone.label.capitalized)
+        if mode == .freeroam {
+            parts.append("Haptics")
+            parts.append("\(settings.alertMode.title) range")
+            if settings.nightVision { parts.append("Night vision") }
         } else {
-            parts.append("Following landmarks")
-        }
-        if !engine.navigateStepText.isEmpty {
-            parts.append(engine.navigateStepText)
-        } else {
+            if engine.quietMode { parts.append("Quiet") }
             parts.append(engine.headphoneStatus)
         }
+        parts.append("Say “Vantage” to ask")
         return parts.joined(separator: " · ")
+    }
+}
+
+/// What Vantage last said: sized to fit when short, scrolls inside a capped height when long,
+/// so a long answer can't push anything off screen.
+private struct CaptionText: View {
+    let text: String
+    private let maxHeight: CGFloat = 160
+
+    var body: some View {
+        ViewThatFits(in: .vertical) {
+            label
+            ScrollView {
+                label
+            }
+            .frame(maxHeight: maxHeight)
+            .scrollIndicators(.visible)
+        }
+        .frame(maxHeight: maxHeight)
+        .id(text)
+    }
+
+    private var label: some View {
+        Text(text)
+            .font(.system(size: 20, weight: .semibold, design: .rounded))
+            .foregroundStyle(Brand.cream)
+            .fixedSize(horizontal: false, vertical: true)
+            .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
