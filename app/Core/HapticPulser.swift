@@ -6,14 +6,46 @@ final class HapticPulser {
     private var engine: CHHapticEngine?
     private var continuousPlayer: CHHapticAdvancedPatternPlayer?
     private var continuousOn = false
+    private var continuousIntensity: Float = 0
+    /// Set when the system stops or resets the engine; the next cue restarts it.
+    private var needsStart = true
 
     init() {
         guard CHHapticEngine.capabilitiesForHardware().supportsHaptics else { return }
         engine = try? CHHapticEngine()
-        engine?.resetHandler = { [weak self] in
-            try? self?.engine?.start()
+        // Haptics only — don't tie the engine to the audio session the mic and TTS keep reconfiguring.
+        engine?.playsHapticsOnly = true
+        // The system stops the engine on audio interruptions and backgrounding, and resets it if
+        // the haptic server dies. Either way, players made before are dead.
+        engine?.stoppedHandler = { [weak self] _ in
+            DispatchQueue.main.async { self?.engineDidStop() }
         }
-        try? engine?.start()
+        engine?.resetHandler = { [weak self] in
+            DispatchQueue.main.async { self?.engineDidStop() }
+        }
+        ensureStarted()
+    }
+
+    private func engineDidStop() {
+        needsStart = true
+        let wasContinuous = continuousOn
+        continuousPlayer = nil
+        continuousOn = false
+        if wasContinuous { startContinuous(intensity: continuousIntensity) }
+    }
+
+    @discardableResult
+    private func ensureStarted() -> Bool {
+        guard let engine else { return false }
+        guard needsStart else { return true }
+        do {
+            try engine.start()
+            needsStart = false
+            return true
+        } catch {
+            print("Haptics: engine start failed: \(error)")
+            return false
+        }
     }
 
     func play(_ pattern: HapticPattern, intensity: Float = 1) {
@@ -61,24 +93,31 @@ final class HapticPulser {
     }
 
     private func startContinuous(intensity: Float) {
-        guard let engine else { return }
+        continuousIntensity = intensity
         if continuousOn {
             try? continuousPlayer?.sendParameters([
                 CHHapticDynamicParameter(parameterID: .hapticIntensityControl, value: intensity, relativeTime: 0)
-            ], atTime: 0)
+            ], atTime: CHHapticTimeImmediate)
             return
         }
+        guard let engine, ensureStarted() else { return }
         do {
-            try engine.start()
+            // Full-strength base event scaled by the intensity control, looped so it lasts as long as
+            // the obstacle is close (a single 30 s event used to go silent while we thought it was on).
             let pattern = try CHHapticPattern(events: [
-                continuous(intensity: intensity, sharpness: 0.5, at: 0, duration: 30)
+                continuous(intensity: 1, sharpness: 0.5, at: 0, duration: 1)
             ], parameters: [])
             let player = try engine.makeAdvancedPlayer(with: pattern)
+            player.loopEnabled = true
             try player.start(atTime: CHHapticTimeImmediate)
+            try player.sendParameters([
+                CHHapticDynamicParameter(parameterID: .hapticIntensityControl, value: intensity, relativeTime: 0)
+            ], atTime: CHHapticTimeImmediate)
             continuousPlayer = player
             continuousOn = true
         } catch {
-            try? engine.start()
+            print("Haptics: continuous start failed: \(error)")
+            needsStart = true
         }
     }
 
@@ -112,12 +151,23 @@ final class HapticPulser {
     }
 
     private func play(events: [CHHapticEvent]) {
-        guard let engine else { return }
+        guard let engine, ensureStarted() else { return }
         do {
-            let player = try engine.makePlayer(with: CHHapticPattern(events: events, parameters: []))
-            try player.start(atTime: CHHapticTimeImmediate)
+            try makeAndStart(events, on: engine)
         } catch {
-            try? engine.start()
+            // Engine was stopped under us — restart once and retry so this cue isn't lost.
+            needsStart = true
+            guard ensureStarted() else { return }
+            do {
+                try makeAndStart(events, on: engine)
+            } catch {
+                print("Haptics: play failed: \(error)")
+            }
         }
+    }
+
+    private func makeAndStart(_ events: [CHHapticEvent], on engine: CHHapticEngine) throws {
+        let player = try engine.makePlayer(with: CHHapticPattern(events: events, parameters: []))
+        try player.start(atTime: CHHapticTimeImmediate)
     }
 }

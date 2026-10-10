@@ -57,6 +57,11 @@ final class Speaker: NSObject, AVAudioPlayerDelegate {
             || session.categoryOptions != options {
             try session.setCategory(.playAndRecord, mode: .measurement, options: options)
         }
+        // iOS mutes all haptics while the mic is recording unless we opt in — and the
+        // wake-word listener keeps the mic on for the whole session.
+        if !session.allowHapticsAndSystemSoundsDuringRecording {
+            try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
+        }
         try session.setActive(true)
     }
 
