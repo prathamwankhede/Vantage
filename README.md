@@ -45,6 +45,7 @@ Allow camera, microphone, speech, and motion permissions, then run on device.
 
 | Path | What’s in it |
 | --- | --- |
+| [`PLAN.md`](PLAN.md) | Product and architecture plan |
 | `app/` | SwiftUI app + `project.yml` for XcodeGen |
 | `app/Core/` | Depth, haptics, speaker, listener, Gemini |
 | `app/Spatial/` | AirPods head motion + spatial tone |

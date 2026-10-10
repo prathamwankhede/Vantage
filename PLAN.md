@@ -1,0 +1,112 @@
+# Vantage v1 Plan
+
+## Product thesis
+
+**Vantage** is a calm, chest-worn iPhone guide for blind and low-vision people. Freeroam watches the path; Navigate uses camera landmarks (no map). Cue restraint, clear phases, and a high-contrast UI are core.
+
+**Tagline:** *Know what’s ahead. Move with confidence.*
+
+**v1 non-goals:** MapKit, place learning / environment maps, a real on-device Gemma LLM, turn-by-turn GPS, hand-to-object find/grab pipelines.
+
+```mermaid
+flowchart TD
+  Home[Home] --> Main[Main: Freeroam or Navigate]
+  Main --> Freeroam[FreeroamEngine]
+  Main --> Navigate[NavigateSession]
+  Freeroam --> Depth[DepthZoneAnalyzer LiDAR or monocular]
+  Freeroam --> Spatial[AirPodsSpatialCue]
+  Freeroam --> Haptics[Haptics when needed]
+  Navigate --> Gemini[Gemini landmark planner]
+  Navigate --> Spatial
+  Navigate --> Depth
+  Ask[Voice ask Vantage] --> SceneAI[On-demand scene Q and A]
+```
+
+## Two modes
+
+### Freeroam
+
+Passive companion while walking. Watches the next few steps; does **not** route.
+
+**Cue hierarchy:**
+1. **Primary:** AirPods spatial tone toward nearest hazard (head-relative when headphone motion is available).
+2. **Secondary:** Haptics — quiet heartbeat when clear; rate/intensity when something is in path.
+3. **Voice:** Sparse. Speak on danger, clear-after-danger, or when the user asks. No constant naming. No depth heat-map as a default cue.
+
+Includes: depth zones, smoothed ingest, stop distance, dodge wording, quiet mode, health check, on-device obstacle naming **on demand**.
+
+### Navigate (no maps)
+
+User names a destination (“pharmacy counter”, “exit to the street”, “room 214”). Gemini reads camera frames and returns short landmark steps — indoors or outdoors — without GPS or MapKit.
+
+**Loop:**
+1. Capture a framed snapshot + short context (mode, last step, goal).
+2. Gemini returns landmark, next action, confidence, optional “I’m not sure”.
+3. Vantage speaks one step; spatial tone can point toward a coarse left / ahead / right bearing.
+4. Re-check on interval or when the user says “next” / “where am I” / “Vantage…”.
+5. Freeroam depth safety stays **always on underneath** so obstacles never wait on Gemini.
+
+**Honesty:** say when unsure; never invent street names; situational awareness, not a cane/dog replacement.
+
+## AirPods / head tracking
+
+- `CMHeadphoneMotionManager` when head tracking is available; else phone attitude + stereo pan.
+- Virtual source azimuth = obstacle or landmark bearing minus head yaw → constant-power pan.
+- Headphones strongly recommended for left/right meaning.
+- Shared audio session (`.playAndRecord`) with the spatial tone ducked under TTS.
+
+## UI / visual identity
+
+- Full-bleed brand home (mark + tagline + CTA) → main with **Freeroam** and **Navigate**.
+- High contrast, large rounded type, one status surface, listening pill, calm motion.
+- Camera session: clean preview + soft edge wash mirroring the ear cue; captions when speaking.
+- Palette: deep ink + cool teal + warm off-white (`app/Design/Brand.swift`).
+
+Screens: Loading → Home → Main → active session.
+
+## Architecture (shipped)
+
+| Area | Location |
+| --- | --- |
+| Depth / alerts / haptics / speaker / listener | `app/Core/` |
+| Gemini + offline scene fallback | `app/Core/GeminiClient.swift`, `SceneAI.swift`, `OfflineAnswers.swift` |
+| AirPods motion + spatial tone | `app/Spatial/` |
+| Freeroam + Navigate | `app/Engine/` |
+| Brand UI | `app/UI/`, `app/Design/` |
+| XcodeGen project | `app/project.yml` |
+
+Bundle ID: `com.vantage.app`. Secrets: `Secrets.swift.example` (Gemini + ElevenLabs).
+
+## Offline answers (not Gemma)
+
+v1 does **not** ship a real Gemma (or other) on-device LLM.
+
+When Gemini is offline or fails, `OfflineAnswers` uses Apple Vision classifications and short template replies so the app still answers. A true bundled Gemma / MediaPipe LLM can replace that later without changing the `SceneAI` call site.
+
+## Non-Pro phones
+
+When LiDAR is unavailable, `MonocularDistanceEstimator` uses Apple Vision (people + classifier) and assumed heights for coarse left/center/right distance. Not a custom Core ML obstacle model.
+
+## Pitch
+
+- Problem: phones are everywhere; many guides are loud, expensive, or map-dependent.
+- What it does: Freeroam watches the path; Navigate uses on-device depth + Gemini landmarks to talk you through a building or block — no map.
+- How: LiDAR (or monocular) zones, AirPods head-relative tones, calm voice, ask when you need more.
+- Disclaimer: not a cane or guide dog replacement.
+
+## Implementation checklist
+
+- [x] Scaffold XcodeGen app, secrets, permissions, safety core, wake word “Vantage”
+- [x] Brand shell (Loading / Home / Main) + Freeroam sparse cue policy
+- [x] Stereo spatial tone + headphone route check + `CMHeadphoneMotionManager`
+- [x] Navigate Gemini step loop; depth always underneath
+- [x] Voice ask path, quiet mode, announce hysteresis
+- [x] README + phrase generator script
+- [ ] Optional later: real on-device LLM, custom CV depth model, richer phrase bank audio
+
+## Accuracy / overwhelm rules
+
+- Longer announce cooldown; name on ask (or stable enter-in-path), not every frame.
+- Spatial tone as primary continuous cue — not beep + haptic + voice stacked.
+- Zone hysteresis; chest-height depth band + confidence filters.
+- Never block the safety loop on Gemini.
