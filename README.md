@@ -14,7 +14,7 @@ Vantage is not a replacement for a white cane or a guide dog.
 
 1. **Freeroam** — Haptics-only while walking (White Cane–style near/medium/far patterns, continuous buzz when very close). Optional LiDAR night-vision overlay. No beeps, no side bars. Ask with “Vantage…” when you want voice.
 2. **Navigate** — Tell Vantage a destination (“the exit”, “pharmacy counter”). Gemini reads the camera and gives short landmark steps. Depth safety stays on underneath. No MapKit, no GPS routing.
-3. **Ask** — Say “Vantage…” then a question (“What’s ahead?”, “Name that”). Answers stay short and honest when unsure.
+3. **Ask** — Say “Vantage…” then a question (“What’s ahead?”, “Name that”). Local toggles like “night vision on/off” never call Gemini.
 
 ## Built with
 

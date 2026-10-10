@@ -357,16 +357,9 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             syncListener()
         }
 
-        if lowered.contains("quiet") {
-            quietMode = true
-            say("Quiet mode. Haptics and tones only.", interrupt: true)
-            return
-        }
-        if lowered.contains("speak") || lowered.contains("talk") {
-            quietMode = false
-            say("Speaking on.", interrupt: true)
-            return
-        }
+        // Local commands only — never spend Gemini/Gemma quota on these.
+        if handleLocalCommand(lowered) { return }
+
         if lowered == "next" || lowered.hasPrefix("next ") || lowered.contains("another step") {
             if mode == .navigate {
                 await navigate.requestStep(force: true)
@@ -390,6 +383,74 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         }
 
         await answerScene(question: command)
+    }
+
+    /// Settings / mode toggles handled on-device with bundled or system TTS only.
+    @discardableResult
+    private func handleLocalCommand(_ lowered: String) -> Bool {
+        if matchesNightVision(lowered) {
+            applyNightVisionCommand(lowered)
+            return true
+        }
+        if lowered.contains("quiet") {
+            quietMode = true
+            say("Quiet mode. Haptics only.", interrupt: true, allowNetwork: false)
+            return true
+        }
+        if lowered.contains("speak") || lowered.contains("talk") {
+            quietMode = false
+            say("Speaking on.", interrupt: true, allowNetwork: false)
+            return true
+        }
+        if lowered.contains("haptic") && (lowered.contains("indoor") || lowered.contains("outdoor")
+            || lowered.contains("universal") || lowered.contains("alert mode")) {
+            if lowered.contains("indoor") {
+                settings.alertMode = .indoor
+                say("Indoor alert mode.", interrupt: true, allowNetwork: false)
+            } else if lowered.contains("outdoor") {
+                settings.alertMode = .outdoor
+                say("Outdoor alert mode.", interrupt: true, allowNetwork: false)
+            } else if lowered.contains("universal") {
+                settings.alertMode = .universal
+                say("Universal alert mode.", interrupt: true, allowNetwork: false)
+            }
+            return true
+        }
+        return false
+    }
+
+    private func matchesNightVision(_ lowered: String) -> Bool {
+        lowered.contains("night vision")
+            || lowered.contains("nightvision")
+            || lowered.contains("lidar vision")
+            || lowered.contains("lid ar vision")
+            || (lowered.contains("night") && lowered.contains("vision"))
+    }
+
+    private func applyNightVisionCommand(_ lowered: String) {
+        let wantsOff = lowered.contains("off") || lowered.contains("disable") || lowered.contains("stop")
+            || lowered.contains("hide") || lowered.contains("turn off") || lowered.contains("switch off")
+        let wantsOn = lowered.contains("on") || lowered.contains("enable") || lowered.contains("start")
+            || lowered.contains("show") || lowered.contains("turn on") || lowered.contains("switch on")
+            || lowered.contains("activate")
+
+        if wantsOff && !wantsOn {
+            settings.nightVision = false
+            nightVisionImage = nil
+            say("Night vision off.", interrupt: true, allowNetwork: false)
+            return
+        }
+        if wantsOn && !wantsOff {
+            settings.nightVision = true
+            say(usesLiDAR ? "Night vision on." : "Night vision on. Needs LiDAR for the depth view.",
+                interrupt: true, allowNetwork: false)
+            return
+        }
+        // "night vision" / "toggle night vision" with no clear on/off → toggle
+        settings.nightVision.toggle()
+        if !settings.nightVision { nightVisionImage = nil }
+        say(settings.nightVision ? "Night vision on." : "Night vision off.",
+            interrupt: true, allowNetwork: false)
     }
 
     private func answerScene(question: String) async {
