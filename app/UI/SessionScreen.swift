@@ -15,18 +15,12 @@ struct SessionScreen: View {
     var body: some View {
         ZStack {
             Color.black.ignoresSafeArea()
-            CameraPreview(session: engine.session)
-                .ignoresSafeArea()
-                .accessibilityHidden(true)
-
-            if mode == .freeroam, settings.nightVision, let cg = engine.nightVisionImage {
-                Image(decorative: cg, scale: 1)
-                    .resizable()
-                    .scaledToFill()
-                    .ignoresSafeArea()
-                    .opacity(0.85)
-                    .accessibilityHidden(true)
-            }
+            CameraPreview(
+                session: engine.session,
+                depthOverlay: mode == .freeroam && settings.nightVision ? engine.nightVisionImage : nil
+            )
+            .ignoresSafeArea()
+            .accessibilityHidden(true)
 
             // Navigate only: soft ear cue wash. Freeroam has no L/C/R bars.
             if mode == .navigate {
@@ -143,9 +137,11 @@ struct SessionScreen: View {
 
 struct CameraPreview: UIViewRepresentable {
     let session: ARSession
+    /// Night-vision depth image in the sensor's native orientation; nil hides the overlay.
+    var depthOverlay: CGImage?
 
-    func makeUIView(context: Context) -> ARSCNView {
-        let view = ARSCNView(frame: .zero)
+    func makeUIView(context: Context) -> DepthOverlayARView {
+        let view = DepthOverlayARView(frame: .zero)
         view.session = session
         view.automaticallyUpdatesLighting = false
         view.rendersCameraGrain = false
@@ -153,5 +149,65 @@ struct CameraPreview: UIViewRepresentable {
         return view
     }
 
-    func updateUIView(_ uiView: ARSCNView, context: Context) {}
+    func updateUIView(_ uiView: DepthOverlayARView, context: Context) {
+        uiView.setDepthOverlay(depthOverlay)
+    }
+}
+
+/// Camera view with the depth overlay drawn in the same view, mapped through ARKit's
+/// display transform — the same mapping ARSCNView uses for the camera image — so the
+/// colours sit exactly on top of what the camera shows.
+final class DepthOverlayARView: ARSCNView {
+    private let overlayLayer = CALayer()
+    private var overlaySize: CGSize = .zero
+
+    override init(frame: CGRect, options: [String: Any]? = nil) {
+        super.init(frame: frame, options: options)
+        overlayLayer.anchorPoint = .zero
+        overlayLayer.position = .zero
+        overlayLayer.opacity = 0.85
+        // Smooth upscaling of the 256×192 depth image.
+        overlayLayer.magnificationFilter = .linear
+        overlayLayer.minificationFilter = .linear
+        // No implicit animations — a default fade on every new frame makes the overlay trail behind.
+        overlayLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(),
+                                "transform": NSNull(), "hidden": NSNull()]
+        overlayLayer.isHidden = true
+        layer.addSublayer(overlayLayer)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func setDepthOverlay(_ image: CGImage?) {
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        overlayLayer.contents = image
+        overlayLayer.isHidden = image == nil
+        if let image {
+            overlaySize = CGSize(width: image.width, height: image.height)
+            layoutOverlay()
+        }
+        CATransaction.commit()
+    }
+
+    override func layoutSubviews() {
+        super.layoutSubviews()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layoutOverlay()
+        CATransaction.commit()
+    }
+
+    /// Image pixels → normalized image coords → (ARKit display transform) → normalized view
+    /// coords → view points. Keeps the overlay on top of the matching camera pixels.
+    private func layoutOverlay() {
+        guard overlaySize != .zero, bounds.width > 0, let frame = session.currentFrame else { return }
+        overlayLayer.bounds = CGRect(origin: .zero, size: overlaySize)
+        let transform = CGAffineTransform(scaleX: 1 / overlaySize.width, y: 1 / overlaySize.height)
+            .concatenating(frame.displayTransform(for: .portrait, viewportSize: bounds.size))
+            .concatenating(CGAffineTransform(scaleX: bounds.width, y: bounds.height))
+        overlayLayer.setAffineTransform(transform)
+    }
 }

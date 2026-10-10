@@ -68,6 +68,8 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     private let frameQueue = DispatchQueue(label: "vantage.frames", qos: .userInteractive)
     private nonisolated(unsafe) var lastFrameUptime: TimeInterval = 0
     private nonisolated(unsafe) var lastMonoTime = Date.distantPast
+    /// Mirrors settings.nightVision for the ARKit delegate queue.
+    private nonisolated(unsafe) var renderNightVision = false
     private var lastSessionRun = Date.distantPast
     private var currentFrame: ARFrame?
 
@@ -150,14 +152,17 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         }
 
         let distances = reading.distances
-        let nightCG: CGImage? = {
-            guard let depth = frame.sceneDepth else { return nil }
-            return NightVisionRenderer.cgImage(from: depth)
-        }()
+        // Only render while the overlay is on.
+        var nightCG: CGImage?
+        // Smoothed depth (averaged over frames) for the overlay — far less edge flicker.
+        if renderNightVision, let depth = frame.smoothedSceneDepth ?? frame.sceneDepth {
+            nightCG = NightVisionRenderer.cgImage(from: depth)
+        }
         Task { @MainActor in
             self.currentFrame = frame
-            if self.settings.nightVision { self.nightVisionImage = nightCG }
-            else { self.nightVisionImage = nil }
+            self.renderNightVision = self.settings.nightVision
+            if !self.settings.nightVision { self.nightVisionImage = nil }
+            else if let nightCG { self.nightVisionImage = nightCG }
             self.updateMotion(from: frame)
             self.ingest(distances)
         }
@@ -585,7 +590,13 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
 
     private func runSession() {
         let configuration = ARWorldTrackingConfiguration()
-        if usesLiDAR { configuration.frameSemantics = .sceneDepth }
+        if usesLiDAR {
+            configuration.frameSemantics = .sceneDepth
+            // Night-vision overlay; safety distances keep using the faster raw sceneDepth.
+            if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
+                configuration.frameSemantics.insert(.smoothedSceneDepth)
+            }
+        }
         session.run(configuration)
         lastSessionRun = Date()
     }

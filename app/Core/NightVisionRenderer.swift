@@ -2,10 +2,49 @@ import ARKit
 import CoreGraphics
 import UIKit
 
-/// Full-frame LiDAR depth as a night-vision style image (not left/center/right bars).
+/// Full-frame LiDAR depth as a colour overlay.
+/// Closest → farthest: navy → blue → green → yellow → orange → red; nothing drawn beyond `maxDepth`.
+///
+/// The image keeps the depth map's native sensor orientation and full resolution (256×192) —
+/// `CameraPreview` places it with ARKit's display transform so it lines up with the camera feed.
 enum NightVisionRenderer {
-    /// Max depth mapped to black (metres). Near = bright green.
-    private static let maxDepth: Float = 5
+    /// Depths at or beyond this (metres) get no overlay, so the camera shows through.
+    private static let maxDepth: Float = 10
+    /// Overlay alpha for in-range depths.
+    private static let overlayAlpha: Float = 220 / 255
+    /// The last stretch before `maxDepth` fades out so red doesn't end in a hard edge.
+    private static let fadeOutDepth: Float = 0.3
+
+    /// Evenly spaced colour stops from closest (0) to farthest (1), linearly blended between.
+    /// Sampled at 10% steps from the "Default" depth gradient the team picked.
+    private static let stops: [SIMD3<Float>] = [
+        SIMD3(3, 20, 142),     // navy
+        SIMD3(25, 65, 187),
+        SIMD3(48, 113, 234),   // blue
+        SIMD3(72, 161, 180),   // teal
+        SIMD3(95, 209, 101),   // green
+        SIMD3(117, 251, 76),
+        SIMD3(146, 252, 77),   // lime
+        SIMD3(211, 253, 80),
+        SIMD3(248, 215, 72),   // yellow
+        SIMD3(237, 125, 48),   // orange
+        SIMD3(234, 55, 35)     // red
+    ]
+
+    /// Premultiplied RGBA per depth step, so the per-pixel loop is a table lookup.
+    private static let lutSize = 1024
+    private static let lut: [(UInt8, UInt8, UInt8, UInt8)] = (0..<lutSize).map { index in
+        let depth = Float(index) / Float(lutSize - 1) * maxDepth
+        let alpha = overlayAlpha * min(1, (maxDepth - depth) / fadeOutDepth)
+        let rgb = color(at: depth / maxDepth) * alpha
+        return (UInt8(rgb.x), UInt8(rgb.y), UInt8(rgb.z), UInt8(alpha * 255))
+    }
+
+    private static func color(at t: Float) -> SIMD3<Float> {
+        let scaled = min(max(t, 0), 1) * Float(stops.count - 1)
+        let index = min(Int(scaled), stops.count - 2)
+        return simd_mix(stops[index], stops[index + 1], SIMD3(repeating: scaled - Float(index)))
+    }
 
     nonisolated static func cgImage(from depthData: ARDepthData) -> CGImage? {
         let map = depthData.depthMap
@@ -17,40 +56,30 @@ enum NightVisionRenderer {
         guard let base = CVPixelBufferGetBaseAddress(map) else { return nil }
         let rowBytes = CVPixelBufferGetBytesPerRow(map)
 
-        // Downsample for UI; rotate landscape depth into portrait for the phone.
-        let step = 2
-        let outW = height / step
-        let outH = width / step
-        var rgba = [UInt8](repeating: 0, count: outW * outH * 4)
-
-        for oy in 0..<outH {
-            for ox in 0..<outW {
-                // Inverse of DepthZoneAnalyzer mapping: buffer x ~ portrait y, buffer y ~ portrait x (mirrored).
-                let bx = min(width - 1, oy * step)
-                let by = min(height - 1, (outW - 1 - ox) * step)
-                let row = (base + by * rowBytes).assumingMemoryBound(to: Float32.self)
-                let d = row[bx]
-                let t = d.isFinite ? min(max(d / maxDepth, 0), 1) : 1
-                // Near = bright phosphor green, far = dark (classic night vision feel).
-                let g = UInt8((1 - t) * 255)
-                let r = UInt8((1 - t) * 40)
-                let b = UInt8((1 - t) * 60)
-                let i = (oy * outW + ox) * 4
-                rgba[i] = r
-                rgba[i + 1] = g
-                rgba[i + 2] = b
-                rgba[i + 3] = 220
+        var rgba = [UInt8](repeating: 0, count: width * height * 4)
+        let scale = Float(lutSize - 1) / maxDepth
+        for y in 0..<height {
+            let row = (base + y * rowBytes).assumingMemoryBound(to: Float32.self)
+            for x in 0..<width {
+                let d = row[x]
+                // No reading or out of range: leave the pixel fully transparent.
+                guard d.isFinite, d > 0, d < maxDepth else { continue }
+                let c = lut[min(lutSize - 1, Int(d * scale))]
+                let i = (y * width + x) * 4
+                rgba[i] = c.0
+                rgba[i + 1] = c.1
+                rgba[i + 2] = c.2
+                rgba[i + 3] = c.3
             }
         }
 
-        let data = Data(rgba)
-        guard let provider = CGDataProvider(data: data as CFData) else { return nil }
+        guard let provider = CGDataProvider(data: Data(rgba) as CFData) else { return nil }
         return CGImage(
-            width: outW,
-            height: outH,
+            width: width,
+            height: height,
             bitsPerComponent: 8,
             bitsPerPixel: 32,
-            bytesPerRow: outW * 4,
+            bytesPerRow: width * 4,
             space: CGColorSpaceCreateDeviceRGB(),
             bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.premultipliedLast.rawValue),
             provider: provider,
