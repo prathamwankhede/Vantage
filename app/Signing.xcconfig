@@ -1,0 +1,6 @@
+// Shared signing defaults. Each developer sets their own team and bundle ID in
+// Local.xcconfig (gitignored) — copy Local.xcconfig.example to get started.
+PRODUCT_BUNDLE_IDENTIFIER = com.vantage.app
+DEVELOPMENT_TEAM =
+
+#include? "Local.xcconfig"

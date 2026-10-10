@@ -23,8 +23,14 @@ targets:
           - "*.xcodeproj"
           - build
           - Secrets.swift.example
+          - SETUP.md
+          - "*.xcconfig"
+          - Local.xcconfig.example
           - Models/.gitkeep
           - Models/README.md
+    configFiles:
+      Debug: Signing.xcconfig
+      Release: Signing.xcconfig
     info:
       path: Info.plist
       properties:
@@ -42,7 +48,7 @@ targets:
           - arkit
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.vantage.app
+        # PRODUCT_BUNDLE_IDENTIFIER and DEVELOPMENT_TEAM come from Signing.xcconfig / Local.xcconfig.
         PRODUCT_NAME: Vantage
         SWIFT_VERSION: "5.0"
         TARGETED_DEVICE_FAMILY: "1"

@@ -19,3 +19,4 @@ app/Models/**
 !app/Models/README.md
 !app/Models/.gitkeep
 
+app/Local.xcconfig
