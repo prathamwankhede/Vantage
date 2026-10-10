@@ -1,0 +1,451 @@
+import ARKit
+import AVFoundation
+import Combine
+import CoreMotion
+import Speech
+import UIKit
+
+/// Passive path companion. Cue hierarchy: spatial tone > haptics > rare voice.
+@MainActor
+final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
+    enum Mode: String {
+        case freeroam
+        case navigate
+    }
+
+    @Published private(set) var distances = SIMD3<Float>(repeating: 5)
+    @Published private(set) var alert: ObstacleAlert?
+    @Published private(set) var caption = ""
+    @Published private(set) var status = "Starting"
+    @Published private(set) var isSpeaking = false
+    @Published private(set) var quietMode = false
+    @Published private(set) var washSide: Zone?
+    @Published private(set) var washStrength: Double = 0
+    @Published private(set) var headphoneStatus = ""
+    @Published private(set) var lastHeard = ""
+    @Published var navigateGoal = ""
+    @Published private(set) var navigateStepText = ""
+    @Published private(set) var mode: Mode = .freeroam
+
+    let session = ARSession()
+    let headphones = HeadphoneMotion()
+    let spatial = SpatialTone()
+    let navigate = NavigateSession()
+
+    private let haptics = HapticPulser()
+    private let speaker = Speaker.shared
+    private let listener = AlwaysListener()
+    private let motion = CMMotionManager()
+
+    private let smoothingFrames = 5
+    private var history: [SIMD3<Float>] = []
+    private var lastPulse = Date.distantPast
+    private var lastStop = Date.distantPast
+    private var lastVoice = Date.distantPast
+    private var lastClearVoice = Date.distantPast
+    private var wasInPath = false
+    private var stableZone: Zone?
+    private var zoneHits = 0
+    private let zoneHysteresis = 4
+    private var usesLiDAR = false
+    private var isForeground = true
+    private var handlingUtterance = false
+    private var awaitingRequestUntil = Date.distantPast
+    private var flipWarned = false
+    private var healthTask: Task<Void, Never>?
+    private let frameQueue = DispatchQueue(label: "vantage.frames", qos: .userInteractive)
+    private nonisolated(unsafe) var lastFrameUptime: TimeInterval = 0
+    private nonisolated(unsafe) var lastMonoTime = Date.distantPast
+    private var lastSessionRun = Date.distantPast
+    private var currentFrame: ARFrame?
+
+    func start(mode: Mode, goal: String = "") {
+        self.mode = mode
+        navigateGoal = goal
+        SceneAI.startMonitoring()
+        AVAudioSession.sharedInstance().requestRecordPermission { @Sendable _ in }
+        SFSpeechRecognizer.requestAuthorization { @Sendable _ in }
+        try? Speaker.configureAudioSession()
+
+        usesLiDAR = ARWorldTrackingConfiguration.supportsFrameSemantics(.sceneDepth)
+        session.delegate = self
+        session.delegateQueue = frameQueue
+        runSession()
+        headphones.start()
+        listener.onUtterance = { [weak self] text in
+            Task { @MainActor in self?.handleUtterance(text) }
+        }
+        listener.onWake = { [weak self] in
+            Task { @MainActor in self?.interruptedByWearer() }
+        }
+        listener.start()
+        startFlipMonitor()
+        startHealthCheck()
+        status = mode == .navigate ? "Navigate" : "Freeroam"
+        headphoneStatus = headphones.statusLine
+
+        if mode == .navigate {
+            navigate.start(goal: goal, engine: self)
+        }
+
+        Task {
+            try? await Task.sleep(nanoseconds: 700_000_000)
+            let line = mode == .navigate
+                ? "Navigate mode. I'll guide you toward \(goal) using what I can see. Say next when you're ready for another step."
+                : "Freeroam. I'll watch the path. Say Vantage when you need me."
+            self.say(line, interrupt: true)
+        }
+    }
+
+    func stop() {
+        healthTask?.cancel()
+        navigate.stop()
+        listener.stop()
+        speaker.stop()
+        spatial.stop()
+        headphones.stop()
+        session.pause()
+        motion.stopAccelerometerUpdates()
+    }
+
+    func setForeground(_ foreground: Bool) {
+        isForeground = foreground
+        if foreground {
+            lastSessionRun = Date()
+            listener.start()
+        } else {
+            listener.stop()
+            speaker.stop()
+        }
+    }
+
+    // MARK: - ARKit
+
+    nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
+        lastFrameUptime = ProcessInfo.processInfo.systemUptime
+        if let latest = session.currentFrame, latest.timestamp > frame.timestamp { return }
+
+        let now = Date()
+        let reading: DepthReading
+        if let depth = frame.sceneDepth {
+            reading = DepthZoneAnalyzer.nearestPerZone(in: depth)
+        } else if now.timeIntervalSince(lastMonoTime) >= 0.2 {
+            lastMonoTime = now
+            reading = MonocularDistanceEstimator.nearestPerZone(in: frame)
+        } else {
+            return
+        }
+
+        let distances = reading.distances
+        Task { @MainActor in
+            self.currentFrame = frame
+            self.ingest(distances)
+        }
+    }
+
+    nonisolated func session(_ session: ARSession, didFailWithError error: Error) {
+        let message = error.localizedDescription
+        Task { @MainActor in self.status = message }
+    }
+
+    // MARK: - Safety loop
+
+    private func ingest(_ reading: SIMD3<Float>) {
+        history.append(reading)
+        if history.count > smoothingFrames { history.removeFirst() }
+        distances = history.reduce(SIMD3<Float>(repeating: 0), +) / Float(history.count)
+
+        let raw = AlertPolicy.alert(for: distances)
+        if let raw {
+            if raw.zone == stableZone {
+                zoneHits += 1
+            } else {
+                stableZone = raw.zone
+                zoneHits = 1
+            }
+            if zoneHits >= zoneHysteresis {
+                alert = raw
+            }
+        } else {
+            stableZone = nil
+            zoneHits = 0
+            alert = nil
+        }
+
+        headphoneStatus = headphones.statusLine
+        applyCues()
+        speaker.recoverIfStuck()
+        let speaking = speaker.isSpeaking
+        if speaking != isSpeaking {
+            isSpeaking = speaking
+            spatial.setSpeaking(speaking)
+            syncListener()
+        }
+        speakWarnings()
+    }
+
+    private func applyCues() {
+        let now = Date()
+        guard let alert else {
+            washSide = nil
+            washStrength = 0
+            spatial.drive(pan: 0, closeness: 0, headphonesConnected: headphones.usingHeadphones)
+            if now.timeIntervalSince(lastPulse) >= 1.2 {
+                lastPulse = now
+                haptics.heartbeat()
+            }
+            return
+        }
+
+        let closeness = Double(alert.intensity)
+        let bearing = alert.zone.bearingRadians
+        let pan = headphones.pan(forBearingRadians: bearing)
+        spatial.drive(pan: pan, closeness: closeness, headphonesConnected: headphones.usingHeadphones)
+        washSide = alert.zone
+        washStrength = closeness
+
+        if now.timeIntervalSince(lastPulse) >= alert.interval {
+            lastPulse = now
+            if quietMode, alert.distance < AlertPolicy.stopDistance {
+                haptics.urgentStop()
+            } else {
+                haptics.pulse(intensity: alert.intensity)
+            }
+        }
+    }
+
+    private func speakWarnings() {
+        guard !handlingUtterance, !quietMode else { return }
+        let now = Date()
+        guard now >= awaitingRequestUntil else { return }
+
+        guard let alert else {
+            if wasInPath, now.timeIntervalSince(lastClearVoice) > 8, now.timeIntervalSince(lastVoice) > 3 {
+                if say("Clear path", allowNetwork: false) {
+                    lastClearVoice = now
+                }
+            }
+            wasInPath = false
+            return
+        }
+
+        let inPath = alert.distance < AlertPolicy.announceDistance
+        if inPath { wasInPath = true }
+
+        if alert.distance < AlertPolicy.stopDistance, now.timeIntervalSince(lastStop) > 4 {
+            lastStop = now
+            let dodge = dodgePhrase(for: alert).map { "Stop, \($0)" } ?? "Stop"
+            say(dodge, interrupt: true, allowNetwork: false)
+        }
+    }
+
+    private func dodgePhrase(for alert: ObstacleAlert) -> String? {
+        let left = distances[Zone.left.rawValue]
+        let center = distances[Zone.center.rawValue]
+        let right = distances[Zone.right.rawValue]
+        if center < AlertPolicy.announceDistance {
+            let side = left >= right ? "left" : "right"
+            return max(left, right) >= max(center + 0.7, 1.5) ? "move \(side)" : "turn \(side)"
+        }
+        if alert.distance < AlertPolicy.stopDistance {
+            return alert.zone == .left ? "move right" : "move left"
+        }
+        return nil
+    }
+
+    // MARK: - Voice
+
+    private func handleUtterance(_ text: String) {
+        let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return }
+        lastHeard = trimmed
+        guard let command = Self.stripWakePrefix(trimmed) else { return }
+        awaitingRequestUntil = .distantPast
+        Task { await handleCommand(command) }
+    }
+
+    private func interruptedByWearer() {
+        speaker.stop()
+        isSpeaking = false
+        caption = ""
+        awaitingRequestUntil = Date().addingTimeInterval(7)
+        syncListener()
+    }
+
+    private func syncListener() {
+        let talking = speaker.isSpeaking
+        if handlingUtterance || talking && caption.lowercased().contains("vantage") {
+            listener.setPaused(true)
+        } else {
+            listener.setSpeaking(talking)
+            listener.setPaused(false)
+        }
+    }
+
+    private func handleCommand(_ command: String) async {
+        let lowered = command.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        handlingUtterance = true
+        defer {
+            handlingUtterance = false
+            syncListener()
+        }
+
+        if lowered.contains("quiet") {
+            quietMode = true
+            say("Quiet mode. Haptics and tones only.", interrupt: true)
+            return
+        }
+        if lowered.contains("speak") || lowered.contains("talk") {
+            quietMode = false
+            say("Speaking on.", interrupt: true)
+            return
+        }
+        if lowered == "next" || lowered.hasPrefix("next ") || lowered.contains("another step") {
+            if mode == .navigate {
+                await navigate.requestStep(force: true)
+            } else {
+                say("Freeroam has no steps. Start Navigate from the menu, or ask what's ahead.")
+            }
+            return
+        }
+        if lowered.contains("where am i") || lowered.contains("what's ahead") || lowered.contains("whats ahead")
+            || lowered.contains("what is ahead") || lowered.contains("what's in front") {
+            await answerScene(question: command)
+            return
+        }
+        if lowered.contains("name") || lowered.contains("what is that") || lowered.contains("what's that") {
+            await nameNearest()
+            return
+        }
+        if mode == .navigate, lowered.contains("arrived") || lowered.contains("i'm here") || lowered.contains("im here") {
+            say("Great. You can go back when you're ready.", interrupt: true)
+            return
+        }
+
+        await answerScene(question: command)
+    }
+
+    private func answerScene(question: String) async {
+        guard let frame = currentFrame ?? session.currentFrame,
+              let snap = FrameSnapshot(frame: frame) else {
+            say("I can't see a frame right now.")
+            return
+        }
+        caption = "Thinking…"
+        let reply = await SceneAI.answer(question, jpeg: snap.jpeg, frame: frame)
+        say(reply, interrupt: true)
+    }
+
+    private func nameNearest() async {
+        guard let frame = currentFrame ?? session.currentFrame else {
+            say("I don't have a clear name for that.", interrupt: true)
+            return
+        }
+        let reading: DepthReading
+        if let depth = frame.sceneDepth {
+            reading = DepthZoneAnalyzer.nearestPerZone(in: depth)
+        } else {
+            reading = MonocularDistanceEstimator.nearestPerZone(in: frame)
+        }
+        guard let alert else {
+            say("Nothing close enough to name.", interrupt: true, allowNetwork: false)
+            return
+        }
+        let point = reading.points[alert.zone.rawValue] ?? SIMD2(0.5, 0.5)
+        if let name = ObstacleNamer.name(in: frame, at: point) {
+            say("\(name) \(directionWord(alert.zone))", interrupt: true, allowNetwork: false)
+        } else {
+            say("Obstacle \(directionWord(alert.zone))", interrupt: true, allowNetwork: false)
+        }
+    }
+
+    private func directionWord(_ zone: Zone) -> String {
+        switch zone {
+        case .left: return "on your left"
+        case .center: return "ahead"
+        case .right: return "on your right"
+        }
+    }
+
+    @discardableResult
+    func say(_ text: String, interrupt: Bool = false, allowNetwork: Bool = true) -> Bool {
+        caption = text
+        let ok = speaker.say(text, interrupt: interrupt, allowNetwork: allowNetwork)
+        if ok { lastVoice = Date() }
+        return ok
+    }
+
+    func snapshotJPEG() -> Data? {
+        guard let frame = currentFrame ?? session.currentFrame else { return nil }
+        return FrameSnapshot(frame: frame)?.jpeg
+    }
+
+    func updateNavigateStep(_ text: String) {
+        navigateStepText = text
+    }
+
+    func setNavigateBearing(_ zone: Zone?) {
+        guard mode == .navigate, let zone else { return }
+        if alert == nil || (alert?.distance ?? 99) > AlertPolicy.announceDistance {
+            let pan = headphones.pan(forBearingRadians: zone.bearingRadians)
+            spatial.drive(pan: pan, closeness: 0.45, headphonesConnected: headphones.usingHeadphones)
+            washSide = zone
+            washStrength = 0.45
+        }
+    }
+
+    // MARK: - Session hygiene
+
+    private func runSession() {
+        let configuration = ARWorldTrackingConfiguration()
+        if usesLiDAR { configuration.frameSemantics = .sceneDepth }
+        session.run(configuration)
+        lastSessionRun = Date()
+    }
+
+    private func startHealthCheck() {
+        healthTask?.cancel()
+        healthTask = Task { @MainActor [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
+                self?.checkHealth()
+            }
+        }
+    }
+
+    private func checkHealth() {
+        guard isForeground else { return }
+        let sinceFrame = ProcessInfo.processInfo.systemUptime - lastFrameUptime
+        if sinceFrame > 8, Date().timeIntervalSince(lastSessionRun) > 15 {
+            runSession()
+        }
+        if !handlingUtterance {
+            syncListener()
+            listener.ensureRunning()
+        }
+    }
+
+    private func startFlipMonitor() {
+        guard motion.isAccelerometerAvailable else { return }
+        motion.accelerometerUpdateInterval = 0.5
+        motion.startAccelerometerUpdates(to: .main) { [weak self] data, _ in
+            guard let self, let data, !self.flipWarned else { return }
+            if data.acceleration.z > 0.7 {
+                self.flipWarned = true
+                self.say("Phone may be facing the wrong way.", interrupt: true, allowNetwork: false)
+            }
+        }
+    }
+
+    static func stripWakePrefix(_ text: String) -> String? {
+        let lowered = text.lowercased().trimmingCharacters(in: .whitespacesAndNewlines)
+        for wake in Brand.wakePhrases {
+            if lowered == wake { return "" }
+            if lowered.hasPrefix(wake + ",") || lowered.hasPrefix(wake + " ") {
+                return String(lowered.dropFirst(wake.count))
+                    .trimmingCharacters(in: CharacterSet(charactersIn: ", ").union(.whitespaces))
+            }
+        }
+        return lowered
+    }
+}

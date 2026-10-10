@@ -1,0 +1,145 @@
+import Foundation
+
+enum GeminiClient {
+    enum Failure: Error {
+        case offline
+        case quota(retryAfter: TimeInterval)
+        case failed
+    }
+
+    struct NavigateStep: Decodable {
+        let landmark: String
+        let action: String
+        let bearing: String
+        let confidence: String
+        let arrived: Bool
+        let unsure: Bool
+
+        var spoken: String {
+            if unsure || confidence.lowercased() == "low" {
+                return "I'm not sure. \(action)"
+            }
+            return action
+        }
+
+        var zoneHint: Zone? {
+            switch bearing.lowercased() {
+            case "left": return .left
+            case "right": return .right
+            case "ahead", "center", "forward": return .center
+            default: return nil
+            }
+        }
+    }
+
+    static func answer(_ question: String, in jpeg: Data) async throws -> String {
+        let prompt = """
+        You are Vantage, a calm guide for a blind or low-vision person. \
+        This photo is from a phone on their chest. Answer in under 18 words. \
+        Use left, ahead, or right. Be honest if unsure — say you think or aren't sure. \
+        Never claim you can detect glass. Do not invent street names or signal colors. \
+        This is situational awareness, not turn-by-turn GPS routing. \
+        Question: \(question)
+        """
+        return try await generate(prompt: prompt, jpeg: jpeg, json: false)
+    }
+
+    static func navigateStep(goal: String, lastStep: String, in jpeg: Data) async throws -> NavigateStep {
+        let prompt = """
+        You are Vantage, guiding a blind or low-vision person to a destination using only what is \
+        visible in this chest-worn camera photo. There is no map and no GPS. \
+        Destination: \(goal). \
+        Previous step you gave: \(lastStep.isEmpty ? "(none)" : lastStep). \
+        Reply ONLY with JSON matching this schema: \
+        {"landmark":"short visible landmark or empty","action":"one short imperative under 16 words",\
+        "bearing":"left|ahead|right","confidence":"high|medium|low","arrived":false,"unsure":false}. \
+        If the destination appears reached, set arrived true. If you cannot see useful clues, set unsure true \
+        and say so in action. Never invent room numbers or street names that are not readable in the photo.
+        """
+        let raw = try await generate(prompt: prompt, jpeg: jpeg, json: true)
+        return try decodeStep(raw)
+    }
+
+    private static func decodeStep(_ raw: String) throws -> NavigateStep {
+        let trimmed = raw
+            .replacingOccurrences(of: "```json", with: "")
+            .replacingOccurrences(of: "```", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard let data = trimmed.data(using: .utf8) else { throw Failure.failed }
+        do {
+            return try JSONDecoder().decode(NavigateStep.self, from: data)
+        } catch {
+            // Model sometimes wraps fields loosely — give a safe spoken fallback.
+            return NavigateStep(
+                landmark: "",
+                action: trimmed.count < 120 ? trimmed : "I'm not sure. Look around slowly and ask again.",
+                bearing: "ahead",
+                confidence: "low",
+                arrived: false,
+                unsure: true
+            )
+        }
+    }
+
+    private static func generate(prompt: String, jpeg: Data, json: Bool) async throws -> String {
+        var request: URLRequest
+        if Secrets.backendURL.isEmpty {
+            guard !Secrets.geminiKey.isEmpty,
+                  let url = URL(string: "https://generativelanguage.googleapis.com/v1beta/models/\(Secrets.geminiModel):generateContent")
+            else { throw Failure.failed }
+            request = URLRequest(url: url)
+            request.setValue(Secrets.geminiKey, forHTTPHeaderField: "x-goog-api-key")
+        } else {
+            guard let url = URL(string: Secrets.backendURL + "/gemini") else { throw Failure.failed }
+            request = URLRequest(url: url)
+            request.setValue(Secrets.backendKey, forHTTPHeaderField: "x-functions-key")
+        }
+
+        var generationConfig: [String: Any] = ["temperature": 0.2]
+        if json { generationConfig["responseMimeType"] = "application/json" }
+        let body: [String: Any] = [
+            "contents": [[
+                "parts": [
+                    ["inline_data": ["mime_type": "image/jpeg", "data": jpeg.base64EncodedString()]],
+                    ["text": prompt]
+                ]
+            ]],
+            "generationConfig": generationConfig
+        ]
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: body)
+        request.timeoutInterval = 12
+
+        let data: Data
+        let response: URLResponse
+        do {
+            (data, response) = try await URLSession.shared.data(for: request)
+        } catch {
+            throw Failure.offline
+        }
+        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
+        if status == 429 { throw Failure.quota(retryAfter: retryDelay(in: data) ?? 60) }
+        guard status == 200,
+              let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let candidates = root["candidates"] as? [[String: Any]],
+              let content = candidates.first?["content"] as? [String: Any],
+              let parts = content["parts"] as? [[String: Any]]
+        else { throw Failure.failed }
+        return parts.compactMap { $0["text"] as? String }.joined()
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func retryDelay(in data: Data) -> TimeInterval? {
+        guard let root = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let details = (root["error"] as? [String: Any])?["details"] as? [[String: Any]]
+        else { return nil }
+        for detail in details {
+            if let delay = detail["retryDelay"] as? String,
+               let seconds = TimeInterval(delay.dropLast()) {
+                return seconds
+            }
+        }
+        return nil
+    }
+}

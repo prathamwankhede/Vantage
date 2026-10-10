@@ -1,0 +1,13 @@
+Secrets.swift
+local.settings.json
+.env
+.env.*
+node_modules/
+.DS_Store
+xcuserdata/
+__pycache__/
+*.xcuserstate
+DerivedData/
+build/
+app/*.xcodeproj/
+!app/project.yml
