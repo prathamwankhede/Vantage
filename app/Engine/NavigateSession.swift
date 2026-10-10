@@ -39,6 +39,8 @@ final class NavigateSession: ObservableObject {
     func requestStep(force: Bool) async {
         guard let engine, !arrived else { return }
         guard force || !busy else { return }
+        // Automatic steps wait until the wearer is walking and Vantage isn't mid-sentence.
+        guard force || (engine.isMoving && !engine.isSpeaking) else { return }
         guard let jpeg = engine.snapshotJPEG() else {
             if force { engine.say("I need a clear camera view for the next step.") }
             return

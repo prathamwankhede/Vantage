@@ -26,6 +26,8 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     @Published var navigateGoal = ""
     @Published private(set) var navigateStepText = ""
     @Published private(set) var mode: Mode = .freeroam
+    /// Walking, from ARKit's tracked position. Spoken directions are only useful while moving.
+    @Published private(set) var isMoving = false
 
     let session = ARSession()
     let headphones = HeadphoneMotion()
@@ -52,6 +54,12 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     private var handlingUtterance = false
     private var awaitingRequestUntil = Date.distantPast
     private var flipWarned = false
+    private var motionSample: (time: TimeInterval, position: SIMD2<Float>)?
+    private var lastWalkingTime: TimeInterval = 0
+    /// Horizontal speed that counts as walking (a slow walk is ~0.8 m/s; chest sway stays well below).
+    private let walkingSpeed: Float = 0.3
+    /// How long below walking speed before we treat the wearer as standing still.
+    private let stillAfter: TimeInterval = 2
     private var healthTask: Task<Void, Never>?
     private let frameQueue = DispatchQueue(label: "vantage.frames", qos: .userInteractive)
     private nonisolated(unsafe) var lastFrameUptime: TimeInterval = 0
@@ -139,6 +147,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         let distances = reading.distances
         Task { @MainActor in
             self.currentFrame = frame
+            self.updateMotion(from: frame)
             self.ingest(distances)
         }
     }
@@ -149,6 +158,28 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     // MARK: - Safety loop
+
+    private func updateMotion(from frame: ARFrame) {
+        guard case .normal = frame.camera.trackingState else {
+            // Tracking can't tell us — keep speaking safety cues rather than risk silence while walking.
+            isMoving = true
+            motionSample = nil
+            return
+        }
+        let translation = frame.camera.transform.columns.3
+        let position = SIMD2(translation.x, translation.z)
+        guard let sample = motionSample else {
+            motionSample = (frame.timestamp, position)
+            return
+        }
+        let elapsed = frame.timestamp - sample.time
+        guard elapsed >= 0.5 else { return }
+        motionSample = (frame.timestamp, position)
+        if simd_distance(position, sample.position) / Float(elapsed) > walkingSpeed {
+            lastWalkingTime = frame.timestamp
+        }
+        isMoving = frame.timestamp - lastWalkingTime < stillAfter
+    }
 
     private func ingest(_ reading: SIMD3<Float>) {
         history.append(reading)
@@ -230,9 +261,10 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         }
 
         let inPath = alert.distance < AlertPolicy.announceDistance
-        if inPath { wasInPath = true }
+        if inPath, isMoving { wasInPath = true }
 
-        if alert.distance < AlertPolicy.stopDistance, now.timeIntervalSince(lastStop) > 4 {
+        // Standing still (e.g. asking a question), the tone and haptics are enough — don't talk over answers.
+        if isMoving, alert.distance < AlertPolicy.stopDistance, now.timeIntervalSince(lastStop) > 4 {
             lastStop = now
             let dodge = dodgePhrase(for: alert).map { "Stop, \($0)" } ?? "Stop"
             say(dodge, interrupt: true, allowNetwork: false)
