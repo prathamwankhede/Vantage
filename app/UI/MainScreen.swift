@@ -110,6 +110,13 @@ struct MainScreen: View {
     // MARK: - Voice
 
     private func greet() {
+        #if DEBUG
+        if !hasGreeted, let route = DebugLaunch.route {
+            hasGreeted = true
+            path = [route]
+            return
+        }
+        #endif
         remindedThisVisit = false
         let line = hasGreeted
             ? "Main menu. Say Freeroam, or Navigate."
@@ -464,3 +471,31 @@ enum VoiceIntent {
     }
 }
 
+#if DEBUG
+/// Launch arguments for checking screens in the Simulator without tapping through:
+/// `-UITestRoute freeroam|destination|navigate` and `-UITestGlow listening|thinking`.
+enum DebugLaunch {
+    static var route: VantageRoute? {
+        switch value(after: "-UITestRoute") {
+        case "freeroam": return .freeroam
+        case "destination": return .destination
+        case "navigate": return .navigate(goal: "the front desk")
+        default: return nil
+        }
+    }
+
+    static var glow: FreeroamEngine.ListenState? {
+        switch value(after: "-UITestGlow") {
+        case "listening": return .listening
+        case "thinking": return .thinking
+        default: return nil
+        }
+    }
+
+    private static func value(after flag: String) -> String? {
+        let args = ProcessInfo.processInfo.arguments
+        guard let index = args.firstIndex(of: flag), index + 1 < args.count else { return nil }
+        return args[index + 1]
+    }
+}
+#endif

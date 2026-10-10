@@ -30,6 +30,11 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var isMoving = false
     /// Called when the wearer asks to leave ("Vantage, go back"); the screen dismisses itself.
     var onExitRequested: (() -> Void)?
+
+    enum ListenState { case idle, listening, thinking }
+    /// Drives the Siri-style edge glow: listening after the wake word, thinking while answering.
+    @Published private(set) var listenState: ListenState = .idle
+    private var listenTimeout: Task<Void, Never>?
     /// Optional LiDAR night-vision depth image (full frame, not L/C/R bars).
     @Published private(set) var nightVisionImage: CGImage?
 
@@ -337,17 +342,40 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return }
         lastHeard = trimmed
+        // Only "Vantage …" is for us — ignore anything else the mic picks up.
         guard let command = Self.stripWakePrefix(trimmed) else { return }
         awaitingRequestUntil = .distantPast
-        Task { await handleCommand(command) }
+        listenTimeout?.cancel()
+        guard !command.isEmpty else {
+            // "Vantage" and then nothing — let the glow fade out.
+            listenState = .idle
+            if caption == "Listening…" { caption = "" }
+            return
+        }
+        Earcon.play(.heard)
+        listenState = .thinking
+        Task {
+            await handleCommand(command)
+            listenState = .idle
+        }
     }
 
+    /// Wake word heard: stop talking, chime, and show the listening glow until the request arrives.
     private func interruptedByWearer() {
         speaker.stop()
         isSpeaking = false
-        caption = ""
+        caption = "Listening…"
         awaitingRequestUntil = Date().addingTimeInterval(7)
         syncListener()
+        Earcon.play(.listening)
+        listenState = .listening
+        listenTimeout?.cancel()
+        listenTimeout = Task { @MainActor in
+            try? await Task.sleep(nanoseconds: 9_000_000_000)
+            guard !Task.isCancelled, listenState == .listening else { return }
+            listenState = .idle
+            if caption == "Listening…" { caption = "" }
+        }
     }
 
     private func syncListener() {
@@ -659,6 +687,6 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
                     .trimmingCharacters(in: CharacterSet(charactersIn: ", ").union(.whitespaces))
             }
         }
-        return lowered
+        return nil
     }
 }

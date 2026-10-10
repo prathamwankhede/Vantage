@@ -129,6 +129,13 @@ final class AlwaysListener: NSObject {
         if let text, !text.isEmpty {
             latestText = text
             if !speaking {
+                // Signal the wake word the moment it's heard (not when the sentence ends), so the
+                // UI can chime and glow while the wearer is still talking. Also lets "Vantage …
+                // pause … what's ahead?" work: finishUtterance waits for the request after a bare wake.
+                if wokeAt == nil, Self.textAfterWake(text) != nil {
+                    wokeAt = Date()
+                    onWake?()
+                }
                 waitForSilence()
             } else if Self.textAfterWake(text) != nil {
                 speaking = false

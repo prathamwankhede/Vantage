@@ -35,6 +35,12 @@ struct SessionScreen: View {
                     .padding(.horizontal, 12)
                     .padding(.bottom, 8)
             }
+
+            #if DEBUG
+            ListeningGlow(state: DebugLaunch.glow ?? engine.listenState)
+            #else
+            ListeningGlow(state: engine.listenState)
+            #endif
         }
         .navigationBarBackButtonHidden(true)
         .toolbar(.hidden, for: .navigationBar)
