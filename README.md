@@ -37,8 +37,8 @@ Vantage is a voice-first guide worn on a chest lanyard. **Freeroam** watches the
 3. **Callouts** — Freeroam speaks sparingly on approach (people, doors, stairs, elevators).
 4. **Asks** — wake word *"Vantage…"* for what's ahead, around me, repeat, return to start, naming.
 5. **Answers** with Gemini when online, on-device Gemma when offline, then Vision templates.
-6. **Navigate** — pin a landmark in 3D, OCR signs, mesh detours, spatial beacon + heading lock.
-7. **Night vision** — LiDAR depth on the camera when there’s light; auto full-frame when the room is dark. Color or **3D Spatial** shading (local, no cloud).
+6. **Navigate** — say a destination; Gemini picks a landmark and LiDAR pins it in 3D. A spatial beacon stays on it, steers round walls and hallway bends, and Compass-style ticks + a Level-style click tell you when you're facing the right way. Destination signs are read on-device.
+7. **Night vision** — LiDAR depth on the camera when there’s light; auto full-frame when the room is dark. Color or **3D Spatial** shading, in both modes (local, no cloud).
 
 Vantage doesn't replace a cane or a guide dog. It adds another sense to a phone people already carry.
 
@@ -54,9 +54,10 @@ Vantage doesn't replace a cane or a guide dog. It adds another sense to a phone 
 | **Calm ElevenLabs voice** | Speaks on ask; disk cache + system voice fallback. |
 | **Always listening** | Wake word *"Vantage…"* — interrupt anytime. |
 | **Quiet mode** | Haptics only (silences Freeroam callouts too). |
-| **Navigate** | 3D landmark pin · sign OCR · room-mesh detours · heading lock on the live beacon. |
+| **Navigate** | 3D landmark pin · on-device sign reading · room mesh that finds doors and routes round walls and bends · HRTF beacon with AirPods head tracking. |
+| **Feel the heading** | Compass-style ticks as you turn, a Level-style click when you're on course — the cone adapts to distance. |
 | **Return to start** | Clew-style ARKit breadcrumbs — no cloud. |
-| **Smart night vision** | Overlay in lit rooms · full LiDAR when dark · Color or 3D Spatial. |
+| **Smart night vision** | Overlay in lit rooms · full LiDAR when dark · Color or 3D Spatial · Freeroam and Navigate. |
 | **Blind-first UI** | Voice from launch, huge targets, ink / teal / cream, VoiceOver-friendly. |
 
 ---
@@ -77,6 +78,10 @@ flowchart LR
         DEPTH["LiDAR zones / camera distance"]
         NV["NightVisionRenderer"]
         ENG["FreeroamEngine"]
+        NAV["NavigateSession<br/>3D pin · beacon · heading"]
+        MESH["RoomMap<br/>scene mesh"]
+        OCR["SignSpotter"]
+        HRTF["SpatialTone (HRTF)"]
         SPK["Speaker"]
         LISTEN["AlwaysListener"]
         GEMMA["GemmaClient"]
@@ -94,6 +99,12 @@ flowchart LR
     ENG --> HAP --> BODY
     ENG --> SPK --> EAR
     ENG --> SCREEN
+    AR --> MESH --> NAV
+    AR --> OCR --> NAV
+    ENG <--> NAV
+    NAV --> HRTF --> EAR
+    NAV --> HAP
+    NAV -->|"landmark + box"| GEM
     ENG -->|"online"| GEM
     ENG -->|"offline / fallback"| GEMMA
     SPK -.-> EL
@@ -111,6 +122,8 @@ Always start with **"Vantage, …"** (from launch, say **Freeroam** or **Navigat
 |---|---|
 | `Freeroam` / `Start` | Begins Freeroam |
 | `Navigate` + destination | Landmark guide with spatial beacon |
+| `… next` | Navigate: ask for the next landmark now |
+| `… where's the door?` | Navigate: nearest door from the room mesh (on-device) |
 | `Vantage` | Ready — ask what's ahead |
 | `… what's ahead?` / `what's in front of me?` | Describes the camera view |
 | `… around me` | Closest labeled things (on-device) |
@@ -159,8 +172,11 @@ More detail: [`app/SETUP.md`](app/SETUP.md) · architecture notes: [`PLAN.md`](P
 |---|---|
 | `app/Engine/FreeroamEngine.swift` | Safety loop, wake word, callouts, crumbs |
 | `app/Engine/NavigateSession.swift` | Landmark pin + beacon + Gemini steps |
-| `app/Core/NavTarget.swift` / `SignSpotter.swift` / `RoomMap.swift` | 3D pin, OCR, mesh detours |
-| `app/Core/HeadingLock.swift` | On-course / off-course from live beacon bearing |
+| `app/Engine/NavTarget.swift` | Pinned target, bearing / distance / direction words |
+| `app/Core/DepthSnapshot.swift` | Photo-instant depth → world point for a pin |
+| `app/Core/SignSpotter.swift` | On-device sign reading for the destination |
+| `app/Core/RoomMap.swift` | Scene-mesh doors + A* routing round walls and bends |
+| `app/Core/HeadingLock.swift` / `HeadingHaptics.swift` | On-course gate (distance-adaptive) + Compass ticks / Level click |
 | `app/Core/SceneTracker.swift` / `CalloutPolicy.swift` | Freeroam approach callouts |
 | `app/Core/BreadcrumbTrail.swift` | Return-to-start keypoints |
 | `app/Core/DepthZoneAnalyzer.swift` | LiDAR left / center / right |
@@ -170,7 +186,7 @@ More detail: [`app/SETUP.md`](app/SETUP.md) · architecture notes: [`PLAN.md`](P
 | `app/Core/DetectionSettings.swift` | Alert modes, haptics, night-vision mode |
 | `app/Core/SceneAI.swift` | Gemini → Gemma → templates |
 | `app/Core/GemmaClient.swift` | On-device scene answers |
-| `app/Core/GeminiClient.swift` | Cloud vision Q&A |
+| `app/Core/GeminiClient.swift` | Cloud vision Q&A + Navigate landmark boxes |
 | `app/Core/Speaker.swift` | ElevenLabs + cache + system voice |
 | `app/Core/AlwaysListener.swift` | Wake-word listening |
 | `app/Spatial/` | HRTF / head tracking for Navigate beacon |
