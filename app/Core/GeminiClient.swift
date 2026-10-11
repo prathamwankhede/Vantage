@@ -2,7 +2,10 @@ import Foundation
 
 enum GeminiClient {
     enum Failure: Error {
+        /// No network path (airplane mode, no Wi-Fi or cell).
         case offline
+        /// Reached Google but no reply in time — the model is slow right now.
+        case timedOut
         case quota(retryAfter: TimeInterval)
         case failed
     }
@@ -152,16 +155,14 @@ enum GeminiClient {
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = try JSONSerialization.data(withJSONObject: body)
-        request.timeoutInterval = 12
+        request.timeoutInterval = 20
 
-        let data: Data
-        let response: URLResponse
-        do {
-            (data, response) = try await URLSession.shared.data(for: request)
-        } catch {
-            throw Failure.offline
+        var (data, status) = try await send(request)
+        // Gemini sometimes answers a valid request with an empty 404 or a 5xx; one retry clears it.
+        if status == 404 || status >= 500 {
+            try? await Task.sleep(nanoseconds: 500_000_000)
+            (data, status) = try await send(request)
         }
-        let status = (response as? HTTPURLResponse)?.statusCode ?? 0
         if status == 429 { throw Failure.quota(retryAfter: retryDelay(in: data) ?? 60) }
         guard status == 200,
               let root = try JSONSerialization.jsonObject(with: data) as? [String: Any],
@@ -171,6 +172,25 @@ enum GeminiClient {
         else { throw Failure.failed }
         return parts.compactMap { $0["text"] as? String }.joined()
             .trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private static func send(_ request: URLRequest) async throws -> (Data, Int) {
+        do {
+            let (data, response) = try await URLSession.shared.data(for: request)
+            return (data, (response as? HTTPURLResponse)?.statusCode ?? 0)
+        } catch let error as URLError {
+            switch error.code {
+            case .timedOut:
+                throw Failure.timedOut
+            case .notConnectedToInternet, .networkConnectionLost, .dataNotAllowed,
+                 .internationalRoamingOff, .cannotFindHost, .cannotConnectToHost, .dnsLookupFailed:
+                throw Failure.offline
+            default:
+                throw Failure.failed
+            }
+        } catch {
+            throw Failure.failed
+        }
     }
 
     private static func retryDelay(in data: Data) -> TimeInterval? {

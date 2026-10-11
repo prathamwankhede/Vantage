@@ -278,6 +278,10 @@ final class NavigateSession: ObservableObject {
             if reason == .user {
                 engine.say("I'm offline, so I can't plan landmarks. Signs and depth are still watching.")
             }
+        } catch GeminiClient.Failure.timedOut {
+            if reason == .user {
+                engine.say("Gemini is slow right now. Say next to try again. Signs and depth are still watching.")
+            }
         } catch GeminiClient.Failure.quota {
             if reason == .user {
                 engine.say("Navigation is pausing for a moment — quota. Depth is still on.")
