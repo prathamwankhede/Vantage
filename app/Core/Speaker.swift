@@ -52,10 +52,12 @@ final class Speaker: NSObject, AVAudioPlayerDelegate {
     nonisolated static func configureAudioSession() throws {
         let options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothA2DP]
         let session = AVAudioSession.sharedInstance()
+        // Default mode, not .measurement: measurement turns off the system's output processing,
+        // which made speech noticeably quiet on the built-in speakers.
         if session.category != .playAndRecord
-            || session.mode != .measurement
+            || session.mode != .default
             || session.categoryOptions != options {
-            try session.setCategory(.playAndRecord, mode: .measurement, options: options)
+            try session.setCategory(.playAndRecord, mode: .default, options: options)
         }
         // iOS mutes all haptics while the mic is recording unless we opt in — and the
         // wake-word listener keeps the mic on for the whole session.
