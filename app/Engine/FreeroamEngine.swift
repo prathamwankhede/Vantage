@@ -2,6 +2,7 @@ import ARKit
 import AVFoundation
 import Combine
 import CoreMotion
+import os
 import Speech
 import UIKit
 
@@ -78,7 +79,20 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     /// Mirrors settings.nightVision for the ARKit delegate queue.
     private nonisolated(unsafe) var renderNightVision = false
     private var lastSessionRun = Date.distantPast
-    private var currentFrame: ARFrame?
+    /// True while a frame update is queued for the main actor. Frames that arrive meanwhile are
+    /// skipped instead of queued — each queued update used to hold its ARFrame, and ARKit stops
+    /// delivering camera images once ~10 frames are held ("delegate is retaining N ARFrames").
+    private nonisolated let mainUpdatePending = OSAllocatedUnfairLock(initialState: false)
+    /// Camera-only distance runs Vision (30–50 ms), so it gets its own queue and skips while busy.
+    private let monoQueue = DispatchQueue(label: "vantage.mono", qos: .userInitiated)
+    private nonisolated let monoBusy = OSAllocatedUnfairLock(initialState: false)
+
+    /// The few numbers the main actor needs from a frame — never the ARFrame itself.
+    private struct FrameMotion: Sendable {
+        let timestamp: TimeInterval
+        let position: SIMD2<Float>
+        let trackingNormal: Bool
+    }
 
     func start(mode: Mode, goal: String = "") {
         self.mode = mode
@@ -147,32 +161,63 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
 
     nonisolated func session(_ session: ARSession, didUpdate frame: ARFrame) {
         lastFrameUptime = ProcessInfo.processInfo.systemUptime
-        if let latest = session.currentFrame, latest.timestamp > frame.timestamp { return }
 
-        let now = Date()
-        let reading: DepthReading
-        if let depth = frame.sceneDepth {
-            reading = DepthZoneAnalyzer.nearestPerZone(in: depth)
-        } else if now.timeIntervalSince(lastMonoTime) >= 0.2 {
+        guard let depth = frame.sceneDepth else {
+            // No LiDAR: estimate from the camera image ~5×/s, off this queue so frames don't back up.
+            let now = Date()
+            guard now.timeIntervalSince(lastMonoTime) >= 0.2,
+                  Self.claim(monoBusy)
+            else { return }
             lastMonoTime = now
-            reading = MonocularDistanceEstimator.nearestPerZone(in: frame)
-        } else {
+            let motion = Self.motion(of: frame)
+            monoQueue.async { [weak self] in
+                let distances = MonocularDistanceEstimator.nearestPerZone(in: frame).distances
+                self?.monoBusy.withLock { $0 = false }
+                self?.deliver(distances: distances, motion: motion, nightImage: nil)
+            }
             return
         }
 
-        let distances = reading.distances
-        // Only render while the overlay is on.
+        let distances = DepthZoneAnalyzer.nearestPerZone(in: depth).distances
+        // Only render while the overlay is on. Smoothed depth (averaged over frames) flickers less.
         var nightCG: CGImage?
-        // Smoothed depth (averaged over frames) for the overlay — far less edge flicker.
-        if renderNightVision, let depth = frame.smoothedSceneDepth ?? frame.sceneDepth {
-            nightCG = NightVisionRenderer.cgImage(from: depth)
+        // Skipped when the main actor hasn't taken the last frame yet — this one would be dropped.
+        if renderNightVision, !mainUpdatePending.withLock({ $0 }),
+           let overlayDepth = frame.smoothedSceneDepth ?? frame.sceneDepth {
+            nightCG = NightVisionRenderer.cgImage(from: overlayDepth)
         }
+        deliver(distances: distances, motion: Self.motion(of: frame), nightImage: nightCG)
+    }
+
+    /// Sets the flag if it was clear; false if it's already set.
+    private nonisolated static func claim(_ flag: OSAllocatedUnfairLock<Bool>) -> Bool {
+        flag.withLock { isSet in
+            if isSet { return false }
+            isSet = true
+            return true
+        }
+    }
+
+    private nonisolated static func motion(of frame: ARFrame) -> FrameMotion {
+        let translation = frame.camera.transform.columns.3
+        var normal = false
+        if case .normal = frame.camera.trackingState { normal = true }
+        return FrameMotion(
+            timestamp: frame.timestamp,
+            position: SIMD2(translation.x, translation.z),
+            trackingNormal: normal
+        )
+    }
+
+    /// Hands one frame's results to the main actor, dropping it if the last hand-off is still pending.
+    private nonisolated func deliver(distances: SIMD3<Float>, motion: FrameMotion, nightImage: CGImage?) {
+        guard Self.claim(mainUpdatePending) else { return }
         Task { @MainActor in
-            self.currentFrame = frame
+            defer { self.mainUpdatePending.withLock { $0 = false } }
             self.renderNightVision = self.settings.nightVision
             if !self.settings.nightVision { self.nightVisionImage = nil }
-            else if let nightCG { self.nightVisionImage = nightCG }
-            self.updateMotion(from: frame)
+            else if let nightImage { self.nightVisionImage = nightImage }
+            self.updateMotion(motion)
             self.ingest(distances)
         }
     }
@@ -184,15 +229,14 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
 
     // MARK: - Safety loop
 
-    private func updateMotion(from frame: ARFrame) {
-        guard case .normal = frame.camera.trackingState else {
+    private func updateMotion(_ frame: FrameMotion) {
+        guard frame.trackingNormal else {
             // Tracking can't tell us — keep speaking safety cues rather than risk silence while walking.
             isMoving = true
             motionSample = nil
             return
         }
-        let translation = frame.camera.transform.columns.3
-        let position = SIMD2(translation.x, translation.z)
+        let position = frame.position
         guard let sample = motionSample else {
             motionSample = (frame.timestamp, position)
             return
@@ -511,7 +555,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     private func answerScene(question: String) async {
-        guard let frame = currentFrame ?? session.currentFrame,
+        guard let frame = session.currentFrame,
               let snap = FrameSnapshot(frame: frame) else {
             say("I can't see a frame right now.")
             return
@@ -523,7 +567,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
 
     /// Everything the phone knows right now, for the model prompt.
     func sceneContext(for frame: ARFrame? = nil) -> SceneContext {
-        let frame = frame ?? currentFrame ?? session.currentFrame
+        let frame = frame ?? session.currentFrame
 
         var nearest: SceneContext.Nearest?
         var labels: [String] = []
@@ -579,7 +623,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     private func nameNearest() async {
-        guard let frame = currentFrame ?? session.currentFrame else {
+        guard let frame = session.currentFrame else {
             say("I don't have a clear name for that.", interrupt: true)
             return
         }
@@ -618,7 +662,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     func snapshotJPEG() -> Data? {
-        guard let frame = currentFrame ?? session.currentFrame else { return nil }
+        guard let frame = session.currentFrame else { return nil }
         return FrameSnapshot(frame: frame)?.jpeg
     }
 
