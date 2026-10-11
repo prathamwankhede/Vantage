@@ -277,15 +277,20 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             return
         }
 
-        // Navigate: spatial tone + optional wash toward hazard; haptics still pulse.
+        // Navigate: HRTF spatial tone toward hazard + wash; haptics still pulse.
         guard let alert else {
             haptics.setContinuousClose(false)
             spatial.drive(pan: 0, closeness: 0, headphonesConnected: headphones.usingHeadphones)
             return
         }
         let closeness = Double(alert.intensity)
-        let pan = headphones.pan(forBearingRadians: alert.zone.bearingRadians)
-        spatial.drive(pan: pan, closeness: closeness, headphonesConnected: headphones.usingHeadphones)
+        spatial.drive(
+            bearingRadians: alert.zone.bearingRadians,
+            distanceMeters: alert.distance,
+            closeness: closeness,
+            listener: headphones.listener,
+            headphonesConnected: headphones.usingHeadphones
+        )
         washSide = alert.zone
         washStrength = closeness
         haptics.setContinuousClose(false)
@@ -624,8 +629,13 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     func setNavigateBearing(_ zone: Zone?) {
         guard mode == .navigate, let zone else { return }
         if alert == nil || (alert?.distance ?? 99) > AlertPolicy.announceDistance {
-            let pan = headphones.pan(forBearingRadians: zone.bearingRadians)
-            spatial.drive(pan: pan, closeness: 0.45, headphonesConnected: headphones.usingHeadphones)
+            spatial.drive(
+                bearingRadians: zone.bearingRadians,
+                distanceMeters: 1.4,
+                closeness: 0.5,
+                listener: headphones.listener,
+                headphonesConnected: headphones.usingHeadphones
+            )
             washSide = zone
             washStrength = 0.45
         }

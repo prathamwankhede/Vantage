@@ -2,7 +2,7 @@
 
 **Know what’s ahead. Move with confidence.**
 
-A calm, chest-worn iPhone guide for blind and low-vision people. Freeroam watches the path with on-device depth and AirPods spatial cues. Navigate uses Gemini landmarks to talk you through a building or block — no map.
+A calm, chest-worn iPhone guide for blind and low-vision people. Freeroam watches the path with on-device depth and haptics. Navigate uses Gemini landmarks plus AirPods HRTF spatial audio to talk you through a building or block — no map.
 
 Vantage is not a replacement for a white cane or a guide dog.
 
@@ -13,7 +13,7 @@ Vantage is not a replacement for a white cane or a guide dog.
 ## What it does
 
 1. **Freeroam** — Haptics-only while walking (White Cane–style near/medium/far patterns, continuous buzz when very close). Optional LiDAR night-vision overlay. No beeps, no side bars. Ask with “Vantage…” when you want voice.
-2. **Navigate** — Tell Vantage a destination (“the exit”, “pharmacy counter”). Gemini reads the camera and gives short landmark steps. Depth safety stays on underneath. No MapKit, no GPS routing.
+2. **Navigate** — Tell Vantage a destination (“the exit”, “pharmacy counter”). Gemini reads the camera and gives short landmark steps. Depth safety stays on underneath. Hazards and steps are placed with `AVAudioEnvironmentNode` HRTF so AirPods + head tracking let you pinpoint where they are. No MapKit, no GPS routing.
 3. **Ask** — Say “Vantage…” then a question (“What’s ahead?”, “Name that”). Local toggles like “night vision on/off” never call Gemini.
 
 ## Built with
@@ -22,7 +22,7 @@ Vantage is not a replacement for a white cane or a guide dog.
 
 ## Run it
 
-Needs a physical iPhone on iOS 17+ (LiDAR recommended). AirPods (or any headphones) are strongly recommended for left/right spatial cues. Head tracking uses `CMHeadphoneMotionManager` when available.
+Needs a physical iPhone on iOS 17+ (LiDAR recommended). AirPods Pro/Max (or any headphones) unlock Navigate spatial audio; head tracking uses `CMHeadphoneMotionManager` when available.
 
 ```bash
 brew install xcodegen
@@ -35,10 +35,11 @@ open Vantage.xcodeproj
 
 Offline Q&A order: **Gemini (online) → Gemma on-device → Vision templates**.
 
-Optional offline phrase bank:
+Offline phrase bank (bundled MP3s under `app/Phrases/`) plus a runtime ElevenLabs disk cache (`Documents/TTSCache` — first network speak is saved for offline reuse):
 
 ```bash
-export ELEVENLABS_API_KEY=…
+# uses app/Secrets.swift when env vars are empty
+export ELEVENLABS_API_KEY=…   # optional override
 python3 scripts/generate_phrases.py
 ```
 
@@ -60,6 +61,6 @@ Allow camera, microphone, speech, and motion permissions, then run on device.
 ## Design principles
 
 - Safety never waits on the network.
-- One primary cue at a time: spatial tone first, then haptics, then sparse voice.
+- Freeroam: haptics only while walking; voice on ask. Navigate: HRTF tone + haptics + sparse voice.
 - Say when unsure. Never invent street names.
 - Distinct ink-and-teal visual identity; calm UI without clutter.

@@ -30,10 +30,12 @@ flowchart TD
 
 Passive companion while walking. Watches the next few steps; does **not** route.
 
-**Cue hierarchy:**
-1. **Primary:** AirPods spatial tone toward nearest hazard (head-relative when headphone motion is available).
-2. **Secondary:** Haptics — quiet heartbeat when clear; rate/intensity when something is in path.
-3. **Voice:** Sparse. Speak on danger, clear-after-danger, or when the user asks. No constant naming. No depth heat-map as a default cue.
+**Cue hierarchy (current):**
+1. **Primary:** Haptics only while walking (near/medium/far patterns, continuous close buzz).
+2. **Optional:** LiDAR night-vision overlay (voice-toggle, no Gemini).
+3. **Voice:** On ask (“Vantage…”) only — no automatic callouts while walking.
+
+**Navigate** still uses **HRTF spatial audio** (`AVAudioEnvironmentNode`) with AirPods head tracking to pinpoint landmarks/hazards.
 
 Includes: depth zones, smoothed ingest, stop distance, dodge wording, quiet mode, health check, on-device obstacle naming **on demand**.
 
@@ -52,14 +54,16 @@ User names a destination (“pharmacy counter”, “exit to the street”, “r
 
 ## AirPods / head tracking
 
-- `CMHeadphoneMotionManager` when head tracking is available; else phone attitude + stereo pan.
-- Virtual source azimuth = obstacle or landmark bearing minus head yaw → constant-power pan.
-- Headphones strongly recommended for left/right meaning.
-- Shared audio session (`.playAndRecord`) with the spatial tone ducked under TTS.
+- `CMHeadphoneMotionManager` + phone attitude → listener orientation (head relative to chest phone).
+- Navigate: `AVAudioEnvironmentNode` + `.HRTFHQ` places a tone at the hazard/landmark in camera space.
+- Freeroam: haptics-only (no spatial tone).
+- Shared audio session (`.playAndRecord`) with the tone ducked under TTS.
+- Offline phrases in `app/Phrases/` + runtime ElevenLabs disk cache (`Documents/TTSCache`).
 
 ## UI / visual identity
 
 - Full-bleed brand home (mark + tagline + CTA) → main with **Freeroam** and **Navigate**.
+- Mode changes use a **teal water pour** cover; loading uses ink/teal ripples.
 - High contrast, large rounded type, one status surface, listening pill, calm motion.
 - Camera session: clean preview + soft edge wash mirroring the ear cue; captions when speaking.
 - Palette: deep ink + cool teal + warm off-white (`app/Design/Brand.swift`).
@@ -93,23 +97,25 @@ When LiDAR is unavailable, `MonocularDistanceEstimator` uses Apple Vision (peopl
 
 - Problem: phones are everywhere; many guides are loud, expensive, or map-dependent.
 - What it does: Freeroam watches the path; Navigate uses on-device depth + Gemini landmarks to talk you through a building or block — no map.
-- How: LiDAR (or monocular) zones, AirPods head-relative tones, calm voice, ask when you need more.
+- How: LiDAR (or monocular) zones, Freeroam haptics, Navigate HRTF + landmarks, calm voice on ask.
 - Disclaimer: not a cane or guide dog replacement.
 
 ## Implementation checklist
 
 - [x] Scaffold XcodeGen app, secrets, permissions, safety core, wake word “Vantage”
 - [x] Brand shell (Loading / Home / Main) + Freeroam sparse cue policy
-- [x] Stereo spatial tone + headphone route check + `CMHeadphoneMotionManager`
-- [x] Navigate Gemini step loop; depth always underneath
+- [x] HRTF (`AVAudioEnvironmentNode` + `.HRTFHQ`) + headphone route + `CMHeadphoneMotionManager`
+- [x] Navigate Gemini step loop; depth always underneath; Freeroam haptics-only
 - [x] Voice ask path, quiet mode, announce hysteresis
-- [x] README + phrase generator script
+- [x] Teal water pour transitions + loading ripples (Vantage ink/teal)
+- [x] README + phrase generator + Speaker ElevenLabs disk cache
 - [x] On-device Gemma (LiteRT-LM) with download script
-- [ ] Optional later: custom CV depth model, richer phrase bank audio
+- [ ] Bundle offline `app/Phrases/*.mp3` once a valid ElevenLabs key is available
+- [ ] Optional later: custom CV depth model
 
 ## Accuracy / overwhelm rules
 
 - Longer announce cooldown; name on ask (or stable enter-in-path), not every frame.
-- Spatial tone as primary continuous cue — not beep + haptic + voice stacked.
+- Freeroam: haptics only. Navigate: one HRTF tone + haptics — not beep + voice stacked.
 - Zone hysteresis; chest-height depth band + confidence filters.
 - Never block the safety loop on Gemini.

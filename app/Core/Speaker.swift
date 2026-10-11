@@ -1,4 +1,6 @@
 import AVFoundation
+import CryptoKit
+import Foundation
 
 enum TTSClient {
     struct Failure: Error {}
@@ -23,7 +25,7 @@ enum TTSClient {
         }
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.timeoutInterval = 6
+        request.timeoutInterval = 8
 
         let (data, response) = try await URLSession.shared.data(for: request)
         guard (response as? HTTPURLResponse)?.statusCode == 200 else { throw Failure() }
@@ -48,7 +50,6 @@ final class Speaker: NSObject, AVAudioPlayerDelegate {
         player?.isPlaying == true || synthesizer.isSpeaking || !queuedClips.isEmpty || fetching
     }
 
-    /// Shared session for TTS, mic, and spatial tones.
     nonisolated static func configureAudioSession() throws {
         let options: AVAudioSession.CategoryOptions = [.defaultToSpeaker, .allowBluetoothA2DP]
         let session = AVAudioSession.sharedInstance()
@@ -59,8 +60,6 @@ final class Speaker: NSObject, AVAudioPlayerDelegate {
             || session.categoryOptions != options {
             try session.setCategory(.playAndRecord, mode: .default, options: options)
         }
-        // iOS mutes all haptics while the mic is recording unless we opt in — and the
-        // wake-word listener keeps the mic on for the whole session.
         if !session.allowHapticsAndSystemSoundsDuringRecording {
             try session.setAllowHapticsAndSystemSoundsDuringRecording(true)
         }
@@ -76,6 +75,7 @@ final class Speaker: NSObject, AVAudioPlayerDelegate {
         requestID += 1
         let id = requestID
 
+        // 1) Bundled Phrases/  2) on-disk ElevenLabs cache  3) network (+ cache)  4) system voice
         if let url = Self.clipURL(for: text), start(try? AVAudioPlayer(contentsOf: url), pan: pan) {
             return true
         }
@@ -84,16 +84,26 @@ final class Speaker: NSObject, AVAudioPlayerDelegate {
             queuedPan = pan
             return true
         }
+        if let cached = Self.cacheURLIfPresent(for: text),
+           start(try? AVAudioPlayer(contentsOf: cached), pan: pan) {
+            return true
+        }
         guard allowNetwork else {
             synthesizer.speak(AVSpeechUtterance(string: text))
             return true
         }
         fetching = true
         Task {
-            let data = try? await TTSClient.synthesize(text)
-            guard id == self.requestID else { return }
-            self.fetching = false
-            if let data, self.start(try? AVAudioPlayer(data: data), pan: pan) { return }
+            do {
+                let data = try await TTSClient.synthesize(text)
+                Self.writeCache(data, for: text)
+                guard id == self.requestID else { return }
+                self.fetching = false
+                if self.start(try? AVAudioPlayer(data: data), pan: pan) { return }
+            } catch {
+                guard id == self.requestID else { return }
+                self.fetching = false
+            }
             self.synthesizer.speak(AVSpeechUtterance(string: text))
         }
         return true
@@ -169,5 +179,29 @@ final class Speaker: NSObject, AVAudioPlayerDelegate {
         let name = slug(text)
         return Bundle.main.url(forResource: name, withExtension: "mp3")
             ?? Bundle.main.url(forResource: name, withExtension: "mp3", subdirectory: "Phrases")
+    }
+
+    // MARK: - Runtime ElevenLabs cache (Documents/TTSCache)
+
+    private static var cacheDirectory: URL {
+        let dir = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
+            .appendingPathComponent("TTSCache", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }
+
+    private static func cacheKey(for text: String) -> String {
+        let raw = "\(Secrets.elevenLabsVoiceID)|eleven_flash_v2_5|\(text)"
+        return SHA256.hash(data: Data(raw.utf8)).map { String(format: "%02x", $0) }.joined()
+    }
+
+    private static func cacheURLIfPresent(for text: String) -> URL? {
+        let url = cacheDirectory.appendingPathComponent("\(cacheKey(for: text)).mp3")
+        return FileManager.default.fileExists(atPath: url.path) ? url : nil
+    }
+
+    private static func writeCache(_ data: Data, for text: String) {
+        let url = cacheDirectory.appendingPathComponent("\(cacheKey(for: text)).mp3")
+        try? data.write(to: url, options: .atomic)
     }
 }
