@@ -136,7 +136,7 @@ Optional phrase bank:
 python3 scripts/generate_phrases.py
 ```
 
-More detail: [`app/SETUP.md`](app/SETUP.md) · Devpost paste: [`DEVPOST.md`](DEVPOST.md)
+More detail: [`app/SETUP.md`](app/SETUP.md)
 
 ---
 
