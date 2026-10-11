@@ -2,7 +2,7 @@
 
 **Know what’s ahead. Move with confidence.**
 
-A calm, chest-worn iPhone guide for blind and low-vision people. Freeroam watches the path with LiDAR (or monocular) depth and haptics. Navigate uses **Google Gemini** landmark steps plus **AirPods HRTF** spatial audio — no map, no GPS routing. Voice is **ElevenLabs**, with on-device **Gemma** when the network drops.
+A calm, chest-worn iPhone guide for blind and low-vision people. **Freeroam** watches the path with LiDAR (or monocular) depth and haptics. Ask with “Vantage…” when you want voice. On-device **Gemma** covers offline Q&A; **Gemini** when you’re online.
 
 Vantage is not a replacement for a white cane or a guide dog.
 
@@ -12,27 +12,26 @@ Vantage is not a replacement for a white cane or a guide dog.
 
 ## Demo (90 seconds)
 
-1. Strap or hold the phone at chest height. Put on AirPods.
-2. **Freeroam** — walk toward a chair/person; feel near / medium / far haptics (continuous buzz when very close).
-3. Say **“Vantage, what’s ahead?”** — Gemini (or on-device Gemma) answers from the camera.
-4. **Navigate** → “the exit” (or any landmark) — hear short steps; the spatial tone points where to look.
-5. Say **“night vision on”** — LiDAR depth overlay (local command, no Gemini).
+1. Hold or strap the phone at chest height.
+2. Say **Start** (or tap Freeroam) — walk toward a chair; feel near / medium / far haptics.
+3. Say **“Vantage, what’s ahead?”**
+4. Say **“night vision on”** (LiDAR phone).
 
 ## What it does
 
 | Mode | Behavior |
 | --- | --- |
-| **Freeroam** | Haptics-only while walking. No beeps. Ask with “Vantage…” when you want voice. |
-| **Navigate** | Destination in plain language. Gemini returns landmark steps. Depth safety stays on underneath. HRTF places the cue in space. |
-| **Ask** | Wake word + question. Local toggles (`quiet mode`, `night vision on/off`) never call the cloud. |
+| **Freeroam** | Haptics-only while walking. No beeps. Ask with “Vantage…” for voice. |
+| **Ask** | Wake word + question. Local toggles (`quiet mode`, `night vision`) never call the cloud. |
+| **Navigate** | Landmark guidance — code present, **hidden in the UI** until redone (`Features.navigate`). |
 
 ## Built with
 
-`Swift` `SwiftUI` `ARKit` `LiDAR` `Vision` `Core Motion` `Core Haptics` `Speech` `AVAudioEnvironmentNode` `ElevenLabs` `Google Gemini` `Gemma` `LiteRT-LM` `XcodeGen`
+`Swift` `SwiftUI` `ARKit` `LiDAR` `Vision` `Core Haptics` `Speech` `ElevenLabs` `Google Gemini` `Gemma` `LiteRT-LM` `XcodeGen`
 
 ## Run it
 
-Physical iPhone, iOS 17+ (LiDAR recommended). AirPods for spatial Navigate.
+Physical iPhone, iOS 17+ (LiDAR recommended).
 
 ```bash
 brew install xcodegen git-lfs && git lfs install
@@ -44,30 +43,23 @@ xcodegen generate
 open Vantage.xcodeproj
 ```
 
-See [`app/SETUP.md`](app/SETUP.md) for signing, Developer Mode, and package quirks.
+See [`app/SETUP.md`](app/SETUP.md) for signing and Developer Mode.
 
-Offline Q&A: **Gemini → Gemma on-device → Vision templates**.  
-TTS: bundled `app/Phrases/` → disk cache → ElevenLabs → system voice.
-
-```bash
-python3 scripts/generate_phrases.py   # needs a valid ElevenLabs key
-```
+Offline Q&A: **Gemini → Gemma on-device → Vision templates**.
 
 ## Repo map
 
 | Path | What’s in it |
 | --- | --- |
-| [`PLAN.md`](PLAN.md) | Architecture and cue policy |
-| [`DEVPOST.md`](DEVPOST.md) | HackRU submission copy + demo script |
+| [`DEVPOST.md`](DEVPOST.md) | HackRU paste-ready submission |
+| [`PLAN.md`](PLAN.md) | Architecture |
+| [`docs/branding/`](docs/branding/) | Logo + Devpost thumbnail |
 | `app/` | SwiftUI app + `project.yml` |
-| `app/Core/` | Depth, haptics, speaker, Gemini, Gemma |
-| `app/Spatial/` | Head tracking + HRTF tone |
-| `app/Engine/` | Freeroam + Navigate |
 | `scripts/` | Phrase bank + Gemma download |
 
 ## Design principles
 
 - Safety never waits on the network.
-- Freeroam: haptics only. Navigate: one HRTF tone + haptics + sparse voice.
+- Freeroam: haptics only while walking; voice on ask.
 - Say when unsure. Never invent street names.
-- Ink + teal + cream — calm UI, large targets, VoiceOver-friendly.
+- Ink + teal + cream — large targets, VoiceOver-friendly.

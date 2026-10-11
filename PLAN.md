@@ -2,58 +2,33 @@
 
 ## Thesis
 
-Chest-worn iPhone guide for blind and low-vision people. **Freeroam** watches the next few steps; **Navigate** uses camera landmarks (no MapKit / GPS). Cue restraint and honesty beat feature spam.
+Chest-worn iPhone guide for blind and low-vision people. **Freeroam** watches the next few steps with sparse haptics. Voice on ask. Honesty over feature spam.
 
 **Tagline:** *Know what’s ahead. Move with confidence.*
 
-**Non-goals:** MapKit, place maps, turn-by-turn GPS, hand-to-object find/grab.
+**Non-goals (v1 demo):** MapKit, GPS routing, hand-to-object find/grab. Landmark **Navigate** is deferred (`Features.navigate = false`) until it’s trustworthy.
 
 ```mermaid
 flowchart TD
-  Main[Main: Freeroam or Navigate] --> Freeroam[FreeroamEngine]
-  Main --> Navigate[NavigateSession]
+  Main[Main: Freeroam] --> Freeroam[FreeroamEngine]
   Freeroam --> Depth[DepthZoneAnalyzer]
   Freeroam --> Haptics[Core Haptics]
-  Navigate --> Gemini[Gemini landmarks]
-  Navigate --> HRTF[AVAudioEnvironmentNode HRTF]
-  Navigate --> Depth
   Ask[Wake: Vantage] --> SceneAI[Gemini then Gemma then templates]
 ```
 
-## Modes
-
-### Freeroam
+## Freeroam
 
 1. Haptics only while walking (near / medium / far; continuous close buzz).
 2. Optional LiDAR night-vision overlay (voice toggle, local).
 3. Voice only on ask (“Vantage…”).
 
-### Navigate
+## Ask / offline
 
-1. Snapshot + goal → Gemini landmark step JSON.
-2. Speak one step; HRTF tone toward coarse bearing (AirPods + head tracking).
-3. Freeroam depth safety always underneath.
-4. Unsure → say so; never invent street names.
-
-## Spatial audio
-
-- `CMHeadphoneMotionManager` + phone attitude → listener vs chest camera.
-- `AVAudioEnvironmentNode` + `.HRTFHQ` places the tone in camera space.
-- Freeroam does not spatialize (haptics carry the cue).
-
-## Stack
-
-| Layer | Role |
-| --- | --- |
-| ARKit LiDAR / monocular Vision | Depth zones |
-| Gemini | Navigate + online Q&A |
-| Gemma (LiteRT-LM) | Offline Q&A |
-| ElevenLabs + phrase cache | Voice |
-| Core Haptics | Freeroam primary cue |
+Gemini online → Gemma (LiteRT-LM) on device → Vision templates. Depth safety never waits on the network.
 
 ## UI
 
-Loading ripples → Main (Freeroam | Navigate) → session. Palette: ink / teal / cream (`app/Design/Brand.swift`).
+Loading ripples → Main → Freeroam session. Palette: ink / teal / cream (`app/Design/Brand.swift`). Huge mode cards; voice from launch.
 
 ## Accuracy rules
 

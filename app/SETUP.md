@@ -19,4 +19,4 @@ If Xcode says "Git LFS is not installed" while resolving packages even though it
 | **Gemma (LiteRT-LM)** | Offline / Gemini failure — on-device LLM |
 | Vision templates | Gemma model missing or still loading |
 
-AirPods recommended for Navigate HRTF (head-tracked spatial tone). Freeroam works with haptics alone.
+Freeroam is haptics-first; headphones optional.

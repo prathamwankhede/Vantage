@@ -3,9 +3,9 @@ import Speech
 import SwiftUI
 import UIKit
 
-/// Feature switches. Navigate should stay on for demos (Gemini landmarks + HRTF).
+/// Feature switches. Navigate stays off until the landmark loop is redone; Freeroam is the demo.
 enum Features {
-    static let navigate = true
+    static let navigate = false
 }
 
 /// Where the mode screen can send you.
