@@ -13,7 +13,8 @@ enum Brand {
 
     static let tagline = "Know what’s ahead. Move with confidence."
     static let wakeWord = "Vantage"
-    static let wakePhrases = ["vantage", "van tage"]
+    /// "Vantage" plus how speech recognition often mishears it ("advantage" matches as a substring).
+    static let wakePhrases = ["vantage", "van tage", "vintage", "ventage", "vontage", "fantage"]
 
     static var titleFont: Font { .system(size: 56, weight: .heavy, design: .rounded) }
     static var taglineFont: Font { .system(size: 20, weight: .semibold, design: .rounded) }
