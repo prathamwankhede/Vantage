@@ -127,7 +127,14 @@ final class NavigateSession: ObservableObject {
 
     private func finishPlan(_ waypoint: SIMD3<Float>?, generation: Int) {
         planning = false
-        if generation == targetGeneration { detour = waypoint }
+        guard generation == targetGeneration else { return }
+        // Ease toward the new turn point so the beacon glides round a bend instead of jumping cell to
+        // cell; a genuinely different route (> 1.5 m away) switches at once.
+        if let waypoint, let old = detour, simd_distance(old, waypoint) < 1.5 {
+            detour = old + (waypoint - old) * 0.5
+        } else {
+            detour = waypoint
+        }
     }
 
     private func updateBeacon(camera: simd_float4x4, direct: (bearing: Float, distance: Float)) {

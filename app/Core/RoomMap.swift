@@ -190,40 +190,71 @@ final class RoomMap: @unchecked Sendable {
 
     // MARK: - Steering
 
-    /// If the straight line from `position` to `target` is blocked, the next point to head for on a
-    /// short route around it; nil when the way is clear (or no route was found).
+    /// If the straight line from `position` to `target` is blocked — a wall, a bend in the hallway —
+    /// the next point to head for on the route around it; nil when the way is clear (or no route).
     func steer(from position: SIMD3<Float>, to target: SIMD3<Float>) -> SIMD3<Float>? {
-        let window: Int32 = 32          // ±8 m around the wearer
         let origin = Self.cell(position)
-        let blocked = inflatedObstacles(around: origin, radius: window)
-        guard !blocked.isEmpty else { return nil }
-
-        // Goal: the target, or a point 7.5 m along the line if it's beyond the window.
-        var goalPoint = target
-        let flat = SIMD2(target.x - position.x, target.z - position.z)
-        if simd_length(flat) > 7.5 {
-            let along = simd_normalize(flat) * 7.5
-            goalPoint = SIMD3(position.x + along.x, target.y, position.z + along.y)
-        }
-        let goal = Self.cell(goalPoint)
-        if lineIsClear(from: origin, to: goal, blocked: blocked) { return nil }
-        if blocked.contains(goal) { return nil }
-
-        guard let path = Self.aStar(from: origin, to: goal, blocked: blocked, window: window, around: origin) else {
-            return nil
-        }
-        // Head for the farthest point on the route that's in clear line of sight, up to ~4 m away.
-        var lookahead = path.first ?? goal
-        for cell in path {
-            let distance = simd_length(SIMD2(Float(cell.x - origin.x), Float(cell.z - origin.z))) * Self.cellSize
-            if distance > 4 { break }
-            if lineIsClear(from: origin, to: cell, blocked: blocked) { lookahead = cell }
-        }
+        let blocked = inflatedObstacles(around: origin, radius: Self.window)
+        guard let lookahead = Self.route(from: position, to: target, blocked: blocked) else { return nil }
         return SIMD3(
             (Float(lookahead.x) + 0.5) * Self.cellSize,
             target.y,
             (Float(lookahead.z) + 0.5) * Self.cellSize
         )
+    }
+
+    /// ±8 m around the wearer.
+    static let window: Int32 = 32
+
+    /// Grid part of `steer`, separate from the mesh so it can be tested on its own.
+    static func route(from position: SIMD3<Float>, to target: SIMD3<Float>, blocked: Set<Cell>) -> Cell? {
+        guard !blocked.isEmpty else { return nil }
+        let origin = cell(position)
+
+        // Goal: the target, or where the straight line to it leaves the map window.
+        var goalPoint = target
+        let flat = SIMD2(target.x - position.x, target.z - position.z)
+        let reach = Float(window - 1) * cellSize
+        let farthest = max(abs(flat.x), abs(flat.y))
+        if farthest > reach {
+            let along = flat * (reach / farthest)
+            goalPoint = SIMD3(position.x + along.x, target.y, position.z + along.y)
+        }
+        // Signs, doors and hallway ends sit on or in a wall: aim for the open floor in front of them.
+        guard let goal = nearestFree(to: cell(goalPoint), from: origin, blocked: blocked) else { return nil }
+        if lineIsClear(from: origin, to: goal, blocked: blocked) { return nil }
+
+        guard let path = aStar(from: origin, to: goal, blocked: blocked, window: window, around: origin) else {
+            return nil
+        }
+        // Head for the farthest point on the route that's in clear line of sight, up to ~4 m away —
+        // round a bend this is the corner, and it slides along as you walk.
+        var lookahead = path.first ?? goal
+        for cell in path {
+            let distance = simd_length(SIMD2(Float(cell.x - origin.x), Float(cell.z - origin.z))) * cellSize
+            if distance > 4 { break }
+            if lineIsClear(from: origin, to: cell, blocked: blocked) { lookahead = cell }
+        }
+        return lookahead
+    }
+
+    /// The free cell nearest `goal` (within ~1.5 m). Cells the wearer can see straight to win by a
+    /// margin, so a sign on a wall resolves to the floor in front of it, not the room behind it.
+    private static func nearestFree(to goal: Cell, from origin: Cell, blocked: Set<Cell>) -> Cell? {
+        if !blocked.contains(goal) { return goal }
+        var best: (cell: Cell, score: Float)?
+        for dx: Int32 in -6...6 {
+            for dz: Int32 in -6...6 {
+                let candidate = Cell(x: goal.x + dx, z: goal.z + dz)
+                guard !blocked.contains(candidate) else { continue }
+                var score = simd_length(SIMD2(Float(dx), Float(dz)))
+                if !lineIsClear(from: origin, to: candidate, blocked: blocked) { score += 3 }
+                // Ties go to the side nearer the wearer.
+                score += 0.01 * simd_length(SIMD2(Float(candidate.x - origin.x), Float(candidate.z - origin.z)))
+                if best == nil || score < best!.score { best = (candidate, score) }
+            }
+        }
+        return best?.cell
     }
 
     /// Obstacle cells near the wearer, grown by one cell (~35 cm clearance for a person).
@@ -246,7 +277,7 @@ final class RoomMap: @unchecked Sendable {
         return blocked
     }
 
-    private func lineIsClear(from start: Cell, to end: Cell, blocked: Set<Cell>) -> Bool {
+    private static func lineIsClear(from start: Cell, to end: Cell, blocked: Set<Cell>) -> Bool {
         let dx = Float(end.x - start.x), dz = Float(end.z - start.z)
         let steps = max(1, Int(max(abs(dx), abs(dz)) * 2))
         for step in 0...steps {

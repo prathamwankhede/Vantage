@@ -375,7 +375,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
 
     private func updateHeadingLock() {
         let bearing = navigate.beacon?.bearing
-        let event = headingLock.update(bearing: bearing)
+        let event = headingLock.update(bearing: bearing, distance: navigate.beacon?.distance)
         // Haptics always (quiet mode included): Compass-style ticks while turning, a Level-style click on lock.
         switch event {
         case .lockedOn: headingHaptics.lockedOn()

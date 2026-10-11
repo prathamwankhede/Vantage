@@ -16,8 +16,12 @@ struct HeadingLock {
         case lockedOut(turnLeft: Bool)
     }
 
-    private static let lockInRadians: Float = 18 * .pi / 180
-    private static let lockOutRadians: Float = 35 * .pi / 180
+    /// "On course" means passing within this far of the target sideways, so the cone adapts to distance:
+    /// wide for the corner of a bend 2 m ahead, narrow for a door 10 m down the hall.
+    private static let lateralTolerance: Float = 0.6
+    private static let minLockIn: Float = 8 * .pi / 180
+    private static let maxLockIn: Float = 30 * .pi / 180
+    private static let lockOutMargin: Float = 15 * .pi / 180
     private static let minDwell: TimeInterval = 0.35
 
     private(set) var state: State = .idle
@@ -31,19 +35,21 @@ struct HeadingLock {
         pendingSince = nil
     }
 
-    /// `bearing` from `NavGuidance` (+ = right of phone forward). Nil clears to idle.
-    mutating func update(bearing: Float?, now: Date = Date()) -> Event {
+    /// `bearing` from `NavGuidance` (+ = right of phone forward), `distance` to the beacon in metres.
+    /// Nil clears to idle.
+    mutating func update(bearing: Float?, distance: Float?, now: Date = Date()) -> Event {
         guard let bearing else {
             reset()
             return .none
         }
         let error = abs(bearing)
+        let lockIn = Self.lockIn(distance: distance)
         let want: State = {
             switch state {
             case .idle, .seeking:
-                return error < Self.lockInRadians ? .locked : .seeking
+                return error < lockIn ? .locked : .seeking
             case .locked:
-                return error > Self.lockOutRadians ? .seeking : .locked
+                return error > lockIn + Self.lockOutMargin ? .seeking : .locked
             }
         }()
 
@@ -72,6 +78,11 @@ struct HeadingLock {
             return .lockedOut(turnLeft: bearing < 0)
         }
         return .none
+    }
+
+    static func lockIn(distance: Float?) -> Float {
+        guard let distance, distance > 0.1 else { return maxLockIn }
+        return min(maxLockIn, max(minLockIn, atan(lateralTolerance / distance)))
     }
 
     /// Spoken turn hint while seeking; rate-limited.
