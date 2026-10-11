@@ -1,6 +1,6 @@
 <div align="center">
 
-<img src="vantage-logo.jpg" alt="Vantage" width="220" />
+<img src="vantage-thumbnail.jpg" alt="Vantage" width="220" />
 
 # Vantage
 
