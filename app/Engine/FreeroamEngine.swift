@@ -20,8 +20,6 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var status = "Starting"
     @Published private(set) var isSpeaking = false
     @Published private(set) var quietMode = false
-    @Published private(set) var washSide: Zone?
-    @Published private(set) var washStrength: Double = 0
     @Published private(set) var headphoneStatus = ""
     @Published private(set) var lastHeard = ""
     @Published var navigateGoal = ""
@@ -397,9 +395,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         let now = Date()
 
         if mode == .freeroam {
-            // Haptics only — no beeps, no spatial tone, no L/C/R wash.
-            washSide = nil
-            washStrength = 0
+            // Haptics only — no beeps, no spatial tone.
             spatial.drive(pan: 0, closeness: 0, headphonesConnected: false)
 
             guard let alert else {
@@ -437,8 +433,6 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
                 listener: headphones.listener,
                 headphonesConnected: headphones.usingHeadphones
             )
-            washSide = alert.zone
-            washStrength = closeness
         } else if let beacon = navigate.beacon {
             // A little louder as you close in.
             let closeness = 0.35 + 0.35 * Double(1 - min(beacon.distance, 10) / 10)
@@ -449,12 +443,8 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
                 listener: headphones.listener,
                 headphonesConnected: headphones.usingHeadphones
             )
-            washSide = NavGuidance.zone(for: beacon.bearing)
-            washStrength = 0.45
         } else {
             spatial.drive(pan: 0, closeness: 0, headphonesConnected: headphones.usingHeadphones)
-            washSide = nil
-            washStrength = 0
         }
         if let alert, now.timeIntervalSince(lastPulse) >= alert.interval {
             lastPulse = now

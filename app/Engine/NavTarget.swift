@@ -42,13 +42,6 @@ enum NavGuidance {
         }
     }
 
-    static func zone(for bearing: Float) -> Zone {
-        let degrees = bearing * 180 / .pi
-        if degrees < -15 { return .left }
-        if degrees > 15 { return .right }
-        return .center
-    }
-
     static func feet(_ metres: Float) -> Int {
         Int((metres * 3.28084).rounded())
     }

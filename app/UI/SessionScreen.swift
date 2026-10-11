@@ -23,12 +23,6 @@ struct SessionScreen: View {
             .ignoresSafeArea()
             .accessibilityHidden(true)
 
-            // Navigate only: soft ear cue wash. Freeroam has no L/C/R bars.
-            if mode == .navigate {
-                EdgeWash(side: engine.washSide, strength: engine.washStrength)
-                    .ignoresSafeArea()
-            }
-
             VStack(spacing: 0) {
                 topBar
                 Spacer(minLength: 0)
