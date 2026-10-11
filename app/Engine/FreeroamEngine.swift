@@ -95,6 +95,12 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     /// Camera-only distance runs Vision (30–50 ms), so it gets its own queue and skips while busy.
     private let monoQueue = DispatchQueue(label: "vantage.mono", qos: .userInitiated)
     private nonisolated let monoBusy = OSAllocatedUnfairLock(initialState: false)
+    /// Reads destination signs on-device while navigating (LiDAR phones). Own queue, skips while busy.
+    nonisolated let signSpotter = SignSpotter()
+    private let signQueue = DispatchQueue(label: "vantage.signs", qos: .utility)
+    private nonisolated let signBusy = OSAllocatedUnfairLock(initialState: false)
+    private nonisolated(unsafe) var spotSigns = false
+    private nonisolated(unsafe) var lastSignScan: TimeInterval = 0
 
     /// The few numbers the main actor needs from a frame — never the ARFrame itself.
     private struct FrameMotion: Sendable {
@@ -133,6 +139,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         if mode == .navigate {
             navigate.start(goal: goal, engine: self)
         }
+        spotSigns = mode == .navigate && usesLiDAR
 
         Task {
             try? await Task.sleep(nanoseconds: 700_000_000)
@@ -147,6 +154,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
 
     func stop() {
         healthTask?.cancel()
+        spotSigns = false
         navigate.stop()
         navTargetStatus = nil
         listener.stop()
@@ -210,6 +218,19 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             lightStreak = 0
         }
         deliver(distances: distances, motion: Self.motion(of: frame), nightImage: nightCG, fullFrame: fullFrame)
+
+        // Navigate: look for the destination's sign about twice a second.
+        if spotSigns, frame.timestamp - lastSignScan >= 0.5, Self.claim(signBusy) {
+            lastSignScan = frame.timestamp
+            let spotter = signSpotter
+            signQueue.async { [weak self] in
+                let match = spotter.scan(frame)
+                self?.signBusy.withLock { $0 = false }
+                if let match {
+                    Task { @MainActor in self?.navigate.pinSign(match) }
+                }
+            }
+        }
     }
 
     /// Enter full night vision after several dark frames; leave after several lit ones.

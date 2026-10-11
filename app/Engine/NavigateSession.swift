@@ -1,7 +1,7 @@
 import Foundation
 import simd
 
-/// Navigate without maps. Gemini picks the next landmark in the photo,
+/// Navigate without maps. Gemini (or a sign read on-device) picks the next landmark in the photo,
 /// LiDAR pins it as a fixed 3D point, and between Gemini calls the beacon, a distance countdown and
 /// distance-based arrival follow it. Freeroam's depth safety keeps running underneath.
 @MainActor
@@ -47,6 +47,7 @@ final class NavigateSession: ObservableObject {
         arrived = false
         lastStep = ""
         clearTarget()
+        engine.signSpotter.setGoal(goal)
         loopTask?.cancel()
         loopTask = Task { @MainActor [weak self] in
             // First step shortly after the greeting.
@@ -159,6 +160,23 @@ final class NavigateSession: ObservableObject {
         return " \(NavGuidance.capitalized(target.label)), \(distance), \(NavGuidance.directionWords(guidance.bearing))."
     }
 
+    // MARK: - Signs
+
+    /// A sign matching the destination was read on-device. Signs win over Gemini's pick.
+    func pinSign(_ match: SignSpotter.Match) {
+        guard let engine, !arrived else { return }
+        if target?.source == .sign { return }
+        let sign = NavTarget(label: "the \(match.text) sign", world: match.world, source: .sign, isGoal: true, measured: match.measured)
+        setTarget(sign)
+        var line = "Sign for \(match.text)."
+        if let guidance {
+            let distance = match.measured ? "\(NavGuidance.feet(guidance.distance)) feet" : "a few steps or more"
+            line = "Sign for \(match.text), \(NavGuidance.directionWords(guidance.bearing)), \(distance)."
+        }
+        engine.updateNavigateStep(line)
+        engine.say(line, interrupt: true, allowNetwork: false)
+    }
+
     // MARK: - Gemini steps
 
     func requestStep(force: Bool) async {
@@ -188,8 +206,8 @@ final class NavigateSession: ObservableObject {
             engine.updateNavigateStep(step.spoken)
 
             var line = step.spoken
-            // Pin the landmark where Gemini boxed it.
-            if !step.unsure, let center = step.uprightCenter, let depth = snapshot.depth {
+            // Pin the landmark where Gemini boxed it, unless a sign is already leading the way.
+            if !step.unsure, let center = step.uprightCenter, let depth = snapshot.depth, target?.source != .sign {
                 let (point, measured) = depth.worldPoint(uprightNormalized: center)
                 let label = step.landmark.isEmpty ? "the landmark" : step.landmark
                 let pinned = NavTarget(label: label, world: point, source: .gemini, isGoal: step.isGoal ?? false, measured: measured)
@@ -204,7 +222,7 @@ final class NavigateSession: ObservableObject {
             }
         } catch GeminiClient.Failure.offline {
             if reason == .user {
-                engine.say("I'm offline, so I can't plan landmarks. Depth is still watching.")
+                engine.say("I'm offline, so I can't plan landmarks. Signs and depth are still watching.")
             }
         } catch GeminiClient.Failure.quota {
             if reason == .user {
