@@ -403,7 +403,9 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             if mode == .navigate {
                 await navigate.requestStep(force: true)
             } else {
-                say("Freeroam has no steps. Start Navigate from the menu, or ask what's ahead.")
+                say(Features.navigate
+                    ? "Freeroam has no steps. Start Navigate from the menu, or ask what's ahead."
+                    : "Freeroam has no steps. Ask me what's ahead.")
             }
             return
         }

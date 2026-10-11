@@ -3,6 +3,12 @@ import Speech
 import SwiftUI
 import UIKit
 
+/// Feature switches. Navigate is hidden while the team focuses on Freeroam — its screens and
+/// engine code stay in place so it can be rebuilt on top of Freeroam; flip this to bring it back.
+enum Features {
+    static let navigate = false
+}
+
 /// Where the mode screen can send you.
 enum VantageRoute: Hashable {
     case freeroam
@@ -43,23 +49,27 @@ struct MainScreen: View {
             header
             ListeningIndicator(
                 listening: listening,
-                text: listening ? "Say “Freeroam” or “Navigate”" : "Vantage is speaking"
+                text: listening ? listenHint : "Vantage is speaking"
             )
             ModeCard(
                 title: "Freeroam",
-                subtitle: "Walk freely. Vibrations warn you about obstacles.",
+                subtitle: Features.navigate
+                    ? "Walk freely. Vibrations warn you about obstacles."
+                    : "Walk freely. Vibrations warn you about obstacles. Tap anywhere here to start.",
                 systemImage: "figure.walk",
                 fill: Brand.teal
             ) {
                 choose(.freeroam)
             }
-            ModeCard(
-                title: "Navigate",
-                subtitle: "Tell me where to go. I'll guide you using the camera.",
-                systemImage: "arrow.triangle.turn.up.right.diamond.fill",
-                fill: Brand.cream
-            ) {
-                choose(.destination)
+            if Features.navigate {
+                ModeCard(
+                    title: "Navigate",
+                    subtitle: "Tell me where to go. I'll guide you using the camera.",
+                    systemImage: "arrow.triangle.turn.up.right.diamond.fill",
+                    fill: Brand.cream
+                ) {
+                    choose(.destination)
+                }
             }
             Text(gemmaStatus)
                 .font(.system(size: 13, weight: .medium, design: .rounded))
@@ -109,6 +119,26 @@ struct MainScreen: View {
 
     // MARK: - Voice
 
+    private var listenHint: String {
+        Features.navigate ? "Say “Freeroam” or “Navigate”" : "Say “Start” or tap the screen"
+    }
+
+    private var welcomeLine: String {
+        Features.navigate
+            ? "Welcome to Vantage. Say Freeroam to walk with vibration warnings, or Navigate to be guided "
+                + "somewhere. You can also tap the top or bottom half of the screen."
+            : "Welcome to Vantage. Say Start, or tap anywhere on the screen, to begin Freeroam. "
+                + "Vibrations will warn you about obstacles."
+    }
+
+    private var menuLine: String {
+        Features.navigate ? "Main menu. Say Freeroam, or Navigate." : "Main menu. Say Start, or tap the screen, to begin."
+    }
+
+    private var promptLine: String {
+        Features.navigate ? "Say Freeroam, or Navigate." : "Say Start, or tap the screen."
+    }
+
     private func greet() {
         #if DEBUG
         if !hasGreeted, let route = DebugLaunch.route {
@@ -118,10 +148,7 @@ struct MainScreen: View {
         }
         #endif
         remindedThisVisit = false
-        let line = hasGreeted
-            ? "Main menu. Say Freeroam, or Navigate."
-            : "Welcome to Vantage. Say Freeroam to walk with vibration warnings, or Navigate to be guided "
-                + "somewhere. You can also tap the top or bottom half of the screen."
+        let line = hasGreeted ? menuLine : welcomeLine
         hasGreeted = true
         voiceTask?.cancel()
         voiceTask = Task { @MainActor in
@@ -151,13 +178,26 @@ struct MainScreen: View {
             try? await Task.sleep(nanoseconds: 20_000_000_000)
             guard path.isEmpty, listening else { return }
             voiceTask?.cancel()
-            voiceTask = Task { @MainActor in await speakThenListen("Say Freeroam, or Navigate.") }
+            voiceTask = Task { @MainActor in await speakThenListen(promptLine) }
         }
     }
 
     private func handle(_ text: String) {
         guard path.isEmpty else { return }
-        switch VoiceIntent.mode(from: text) {
+        let intent = VoiceIntent.mode(from: text)
+        if !Features.navigate {
+            if intent == .freeroam || VoiceIntent.isStart(text) {
+                choose(.freeroam)
+                return
+            }
+            let line = intent != nil
+                ? "Navigate isn't available right now. Say Start to begin Freeroam."
+                : "Sorry, I didn't catch that. \(promptLine)"
+            voiceTask?.cancel()
+            voiceTask = Task { @MainActor in await speakThenListen(line) }
+            return
+        }
+        switch intent {
         case .freeroam:
             choose(.freeroam)
         case .navigate(let goal?):
@@ -167,7 +207,7 @@ struct MainScreen: View {
         case nil:
             voiceTask?.cancel()
             voiceTask = Task { @MainActor in
-                await speakThenListen("Sorry, I didn't catch that. Say Freeroam, or Navigate.")
+                await speakThenListen("Sorry, I didn't catch that. \(promptLine)")
             }
         }
     }
@@ -446,6 +486,13 @@ enum VoiceIntent {
         return goal.isEmpty ? nil : goal
     }
 
+    /// "Start", "begin", "ready", "let's go" — used when Freeroam is the only mode.
+    static func isStart(_ text: String) -> Bool {
+        let lower = normalized(text)
+        return lower == "go" || lower == "yes"
+            || ["start", "begin", "ready", "let's go", "lets go"].contains(where: lower.contains)
+    }
+
     static func isCancel(_ text: String) -> Bool {
         let lower = normalized(text)
         return lower == "back" || ["cancel", "go back", "main menu", "never mind", "nevermind"]
@@ -478,8 +525,8 @@ enum DebugLaunch {
     static var route: VantageRoute? {
         switch value(after: "-UITestRoute") {
         case "freeroam": return .freeroam
-        case "destination": return .destination
-        case "navigate": return .navigate(goal: "the front desk")
+        case "destination" where Features.navigate: return .destination
+        case "navigate" where Features.navigate: return .navigate(goal: "the front desk")
         default: return nil
         }
     }
