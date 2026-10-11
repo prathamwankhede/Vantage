@@ -108,6 +108,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     private nonisolated(unsafe) var lastSceneScan: TimeInterval = 0
 
     private var headingLock = HeadingLock()
+    private let headingHaptics = HeadingHaptics()
     private var calloutPolicy = CalloutPolicy()
     private var crumbs = BreadcrumbTrail()
     private var lastSceneObjects: [SceneObject] = []
@@ -151,6 +152,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         headphoneStatus = headphones.statusLine
 
         headingLock.reset()
+        headingHaptics.reset()
         calloutPolicy.reset()
         crumbs.reset()
         lastSceneObjects = []
@@ -178,6 +180,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         navigate.stop()
         roomMap.reset()
         headingLock.reset()
+        headingHaptics.reset()
         calloutPolicy.reset()
         crumbs.reset()
         lastSceneObjects = []
@@ -371,9 +374,22 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     private func updateHeadingLock() {
-        guard !handlingUtterance, !quietMode else { return }
         let bearing = navigate.beacon?.bearing
-        switch headingLock.update(bearing: bearing) {
+        let event = headingLock.update(bearing: bearing)
+        // Haptics always (quiet mode included): Compass-style ticks while turning, a Level-style click on lock.
+        switch event {
+        case .lockedOn: headingHaptics.lockedOn()
+        case .lockedOut: headingHaptics.lockedOut()
+        case .none: break
+        }
+        if let bearing {
+            headingHaptics.track(bearing: bearing, seeking: headingLock.state == .seeking)
+        } else {
+            headingHaptics.reset()
+        }
+
+        guard !handlingUtterance, !quietMode else { return }
+        switch event {
         case .lockedOn:
             Earcon.play(.headingLock)
         case .lockedOut(let turnLeft):
