@@ -63,7 +63,7 @@ User names a destination (“pharmacy counter”, “exit to the street”, “r
 ## UI / visual identity
 
 - Full-bleed brand home (mark + tagline + CTA) → main with **Freeroam** and **Navigate**.
-- Mode changes use a **teal water pour** cover; loading uses ink/teal ripples.
+- Loading screen and mode cards use soft ink/teal ripples.
 - High contrast, large rounded type, one status surface, listening pill, calm motion.
 - Camera session: clean preview + soft edge wash mirroring the ear cue; captions when speaking.
 - Palette: deep ink + cool teal + warm off-white (`app/Design/Brand.swift`).
@@ -107,7 +107,7 @@ When LiDAR is unavailable, `MonocularDistanceEstimator` uses Apple Vision (peopl
 - [x] HRTF (`AVAudioEnvironmentNode` + `.HRTFHQ`) + headphone route + `CMHeadphoneMotionManager`
 - [x] Navigate Gemini step loop; depth always underneath; Freeroam haptics-only
 - [x] Voice ask path, quiet mode, announce hysteresis
-- [x] Teal water pour transitions + loading ripples (Vantage ink/teal)
+- [x] Loading ripples (Vantage ink/teal)
 - [x] README + phrase generator + Speaker ElevenLabs disk cache
 - [x] On-device Gemma (LiteRT-LM) with download script
 - [ ] Bundle offline `app/Phrases/*.mp3` once a valid ElevenLabs key is available

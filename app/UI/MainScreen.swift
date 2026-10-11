@@ -26,34 +26,21 @@ struct MainScreen: View {
     @State private var voiceTask: Task<Void, Never>?
     @State private var gemmaStatus = GemmaClient.status.label
     @State private var showSettings = false
-    @State private var pouring: VantageRoute?
     @StateObject private var voice = VoiceCommandBridge()
 
     var body: some View {
-        ZStack {
-            NavigationStack(path: $path) {
-                menu
-                    .navigationDestination(for: VantageRoute.self) { route in
-                        switch route {
-                        case .freeroam:
-                            SessionScreen(mode: .freeroam, goal: "")
-                        case .destination:
-                            DestinationScreen { goal in pour(to: .navigate(goal: goal)) }
-                        case .navigate(let goal):
-                            SessionScreen(mode: .navigate, goal: goal)
-                        }
-                    }
-            }
-            if pouring != nil {
-                TealWaterPour {
-                    if let route = pouring {
-                        path.append(route)
-                        pouring = nil
+        NavigationStack(path: $path) {
+            menu
+                .navigationDestination(for: VantageRoute.self) { route in
+                    switch route {
+                    case .freeroam:
+                        SessionScreen(mode: .freeroam, goal: "")
+                    case .destination:
+                        DestinationScreen { goal in path = [.navigate(goal: goal)] }
+                    case .navigate(let goal):
+                        SessionScreen(mode: .navigate, goal: goal)
                     }
                 }
-                .transition(.opacity)
-                .zIndex(10)
-            }
         }
     }
 
@@ -226,15 +213,10 @@ struct MainScreen: View {
     }
 
     private func choose(_ route: VantageRoute) {
-        pour(to: route)
-    }
-
-    private func pour(to route: VantageRoute) {
-        guard pouring == nil else { return }
         stopVoice()
         Speaker.shared.stop()
         UIImpactFeedbackGenerator(style: .medium).impactOccurred()
-        withAnimation(.easeIn(duration: 0.15)) { pouring = route }
+        path.append(route)
     }
 
     private func stopVoice() {
