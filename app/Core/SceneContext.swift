@@ -27,6 +27,8 @@ struct SceneContext {
     var labels: [String]
     var headphones: String
     var date = Date()
+    /// Room structure from the LiDAR scene mesh (Navigate), e.g. detected doors.
+    var structure: String? = nil
 
     /// Anything at or beyond this is reported as "nothing within".
     static let maxRange: Float = 5
@@ -84,6 +86,7 @@ struct SceneContext {
 
         let time = date.formatted(date: .omitted, time: .shortened)
         lines.append("- Local time: \(time).")
+        if let structure { lines.append("- \(structure).") }
 
         return lines.joined(separator: "\n")
     }

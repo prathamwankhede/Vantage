@@ -97,6 +97,8 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     private nonisolated let monoBusy = OSAllocatedUnfairLock(initialState: false)
     /// Reads destination signs on-device while navigating (LiDAR phones). Own queue, skips while busy.
     nonisolated let signSpotter = SignSpotter()
+    /// Live room structure (walls, doors, obstacles) from ARKit's classified scene mesh, Navigate only.
+    nonisolated let roomMap = RoomMap()
     private let signQueue = DispatchQueue(label: "vantage.signs", qos: .utility)
     private nonisolated let signBusy = OSAllocatedUnfairLock(initialState: false)
     private nonisolated(unsafe) var spotSigns = false
@@ -156,6 +158,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         healthTask?.cancel()
         spotSigns = false
         navigate.stop()
+        roomMap.reset()
         navTargetStatus = nil
         listener.stop()
         speaker.stop()
@@ -222,6 +225,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         // Navigate: look for the destination's sign about twice a second.
         if spotSigns, frame.timestamp - lastSignScan >= 0.5, Self.claim(signBusy) {
             lastSignScan = frame.timestamp
+            roomMap.setFloorHint(cameraY: frame.camera.transform.columns.3.y)
             let spotter = signSpotter
             signQueue.async { [weak self] in
                 let match = spotter.scan(frame)
@@ -307,6 +311,19 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             status = "\(NavGuidance.capitalized(target.label)) · \(distance) · \(NavGuidance.directionWords(beacon.bearing))"
         }
         if status != navTargetStatus { navTargetStatus = status }
+    }
+
+    // Scene-mesh anchors (Navigate only) feed the room map on its own queue.
+    nonisolated func session(_ session: ARSession, didAdd anchors: [ARAnchor]) {
+        roomMap.update(anchors)
+    }
+
+    nonisolated func session(_ session: ARSession, didUpdate anchors: [ARAnchor]) {
+        roomMap.update(anchors)
+    }
+
+    nonisolated func session(_ session: ARSession, didRemove anchors: [ARAnchor]) {
+        roomMap.remove(anchors)
     }
 
     nonisolated func session(_ session: ARSession, didFailWithError error: Error) {
@@ -564,6 +581,11 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             await answerScene(question: command)
             return
         }
+        if mode == .navigate, lowered.contains("door"),
+           lowered.contains("where") || lowered.contains("nearest") || lowered.contains("find") {
+            answerNearestDoor()
+            return
+        }
         if lowered.contains("name") || lowered.contains("what is that") || lowered.contains("what's that") {
             await nameNearest()
             return
@@ -723,8 +745,40 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             tracking: tracking,
             ambientIntensity: frame?.lightEstimate.map { Float($0.ambientIntensity) },
             labels: labels,
-            headphones: headphones.usingHeadphones ? headphones.statusLine : "phone speaker"
+            headphones: headphones.usingHeadphones ? headphones.statusLine : "phone speaker",
+            structure: mode == .navigate ? structureSummary(camera: frame?.camera.transform) : nil
         )
+    }
+
+    /// Doors the room mesh has found, nearest first, for the model prompt.
+    private func structureSummary(camera: simd_float4x4?) -> String? {
+        guard let camera else { return nil }
+        let doors = roomMap.doors()
+            .compactMap { NavGuidance.bearingAndDistance(to: $0.center, from: camera) }
+            .sorted { $0.distance < $1.distance }
+            .prefix(3)
+        guard !doors.isEmpty else { return nil }
+        let described = doors.map {
+            String(format: "door %.1f m (%d ft) ", $0.distance, NavGuidance.feet($0.distance)) + NavGuidance.directionWords($0.bearing)
+        }
+        return "Doors found by the LiDAR room mesh: " + described.joined(separator: "; ")
+    }
+
+    /// Nearest door from the room mesh — instant and on-device.
+    private func answerNearestDoor() {
+        guard let camera = session.currentFrame?.camera.transform else {
+            say("I can't see right now.", interrupt: true, allowNetwork: false)
+            return
+        }
+        let nearest = roomMap.doors()
+            .compactMap { NavGuidance.bearingAndDistance(to: $0.center, from: camera) }
+            .min { $0.distance < $1.distance }
+        guard let nearest else {
+            say("I haven't spotted a door yet. Turn slowly so I can look around.", interrupt: true, allowNetwork: false)
+            return
+        }
+        say("Door, \(NavGuidance.feet(nearest.distance)) feet, \(NavGuidance.directionWords(nearest.bearing)).",
+            interrupt: true, allowNetwork: false)
     }
 
     private func nameNearest() async {
@@ -785,6 +839,11 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             // Night-vision overlay; safety distances keep using the faster raw sceneDepth.
             if ARWorldTrackingConfiguration.supportsFrameSemantics(.smoothedSceneDepth) {
                 configuration.frameSemantics.insert(.smoothedSceneDepth)
+            }
+            // RoomPlan-style live structure for Navigate: a mesh labelled wall / floor / door / ….
+            // Off in Freeroam to keep the CPU and GPU free.
+            if mode == .navigate, ARWorldTrackingConfiguration.supportsSceneReconstruction(.meshWithClassification) {
+                configuration.sceneReconstruction = .meshWithClassification
             }
         }
         session.run(configuration)
