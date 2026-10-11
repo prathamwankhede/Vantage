@@ -101,6 +101,18 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     private nonisolated let signBusy = OSAllocatedUnfairLock(initialState: false)
     private nonisolated(unsafe) var spotSigns = false
     private nonisolated(unsafe) var lastSignScan: TimeInterval = 0
+    /// Freeroam scene labels (people / door / stairs) — own queue, skips while busy.
+    private let sceneQueue = DispatchQueue(label: "vantage.scene", qos: .utility)
+    private nonisolated let sceneBusy = OSAllocatedUnfairLock(initialState: false)
+    private nonisolated(unsafe) var trackScene = false
+    private nonisolated(unsafe) var lastSceneScan: TimeInterval = 0
+
+    private var headingLock = HeadingLock()
+    private var calloutPolicy = CalloutPolicy()
+    private var crumbs = BreadcrumbTrail()
+    private var lastSceneObjects: [SceneObject] = []
+    private var lastGuidanceLine = ""
+    private var lastCalloutAt = Date.distantPast
 
     /// The few numbers the main actor needs from a frame — never the ARFrame itself.
     private struct FrameMotion: Sendable {
@@ -109,6 +121,8 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         let trackingNormal: Bool
         /// Full camera pose, for Navigate's bearing/distance to a pinned target.
         let cameraTransform: simd_float4x4
+        /// Horizontal yaw (atan2 of camera forward) for breadcrumb turns.
+        let yaw: Float
     }
 
     func start(mode: Mode, goal: String = "") {
@@ -136,18 +150,23 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         status = mode == .navigate ? "Navigate" : "Freeroam"
         headphoneStatus = headphones.statusLine
 
+        headingLock.reset()
+        calloutPolicy.reset()
+        crumbs.reset()
+        lastSceneObjects = []
+        lastGuidanceLine = ""
+
         if mode == .navigate {
             navigate.start(goal: goal, engine: self)
         }
         spotSigns = mode == .navigate && usesLiDAR
+        trackScene = mode == .freeroam
 
         Task {
             try? await Task.sleep(nanoseconds: 700_000_000)
             let line = mode == .navigate
-                ? "Navigating to \(goal). I'll guide you using what I can see. Say Vantage, next, for another step, "
-                    + "or Vantage, go back, for the main menu."
-                : "Freeroam. Vibrations watch the path. Say Vantage to ask me something, "
-                    + "or Vantage, go back, for the main menu."
+                ? "Navigating to \(goal). Say Vantage when you need me."
+                : "Freeroam. Vibrations watch the path. Say Vantage when you need me."
             self.say(line, interrupt: true)
         }
     }
@@ -155,8 +174,13 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     func stop() {
         healthTask?.cancel()
         spotSigns = false
+        trackScene = false
         navigate.stop()
         roomMap.reset()
+        headingLock.reset()
+        calloutPolicy.reset()
+        crumbs.reset()
+        lastSceneObjects = []
         navTargetStatus = nil
         listener.stop()
         speaker.stop()
@@ -195,6 +219,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
                 let distances = MonocularDistanceEstimator.nearestPerZone(in: frame).distances
                 self?.monoBusy.withLock { $0 = false }
                 self?.deliver(distances: distances, motion: motion, nightImage: nil)
+                self?.maybeScanScene(frame: frame, distances: distances)
             }
             return
         }
@@ -219,6 +244,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             lightStreak = 0
         }
         deliver(distances: distances, motion: Self.motion(of: frame), nightImage: nightCG, fullFrame: fullFrame)
+        maybeScanScene(frame: frame, distances: distances)
 
         // Navigate: look for the destination's sign about twice a second.
         if spotSigns, frame.timestamp - lastSignScan >= 0.5, Self.claim(signBusy) {
@@ -232,6 +258,35 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
                     Task { @MainActor in self?.navigate.pinSign(match) }
                 }
             }
+        }
+    }
+
+    /// Freeroam: classify people / doors / stairs ~2×/s for sparse spoken callouts.
+    private nonisolated func maybeScanScene(frame: ARFrame, distances: SIMD3<Float>) {
+        guard trackScene, frame.timestamp - lastSceneScan >= 0.5, Self.claim(sceneBusy) else { return }
+        lastSceneScan = frame.timestamp
+        sceneQueue.async { [weak self] in
+            let objects = SceneTracker.scan(frame: frame, distances: distances)
+            self?.sceneBusy.withLock { $0 = false }
+            Task { @MainActor in self?.applySceneObjects(objects) }
+        }
+    }
+
+    private func applySceneObjects(_ objects: [SceneObject]) {
+        lastSceneObjects = objects
+        guard mode == .freeroam,
+              !handlingUtterance,
+              !quietMode,
+              settings.speechFeedback
+        else { return }
+        let now = Date()
+        guard now.timeIntervalSince(lastCalloutAt) >= 2.5,
+              now.timeIntervalSince(lastVoice) >= 2,
+              let callout = calloutPolicy.evaluate(objects: objects, isMoving: isMoving, quietMode: quietMode, now: now)
+        else { return }
+        if callout.playLandmarkEarcon { Earcon.play(.landmark) }
+        if say(callout.text, allowNetwork: false) {
+            lastCalloutAt = now
         }
     }
 
@@ -263,14 +318,17 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     private nonisolated static func motion(of frame: ARFrame) -> FrameMotion {
-        let translation = frame.camera.transform.columns.3
+        let transform = frame.camera.transform
+        let translation = transform.columns.3
+        let forward = -transform.columns.2
         var normal = false
         if case .normal = frame.camera.trackingState { normal = true }
         return FrameMotion(
             timestamp: frame.timestamp,
             position: SIMD2(translation.x, translation.z),
             trackingNormal: normal,
-            cameraTransform: frame.camera.transform
+            cameraTransform: transform,
+            yaw: atan2(-forward.x, -forward.z)
         )
     }
 
@@ -294,11 +352,38 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
                 self.nightVisionFullFrame = fullFrame
             }
             self.updateMotion(motion)
+            self.recordCrumbs(motion)
             if self.mode == .navigate {
                 self.navigate.update(camera: motion.cameraTransform)
                 self.refreshNavStatus()
+                self.updateHeadingLock()
+            }
+            if self.crumbs.returning, let line = self.crumbs.update(position: motion.position, yaw: motion.yaw) {
+                self.say(line, interrupt: true, allowNetwork: false)
             }
             self.ingest(distances)
+        }
+    }
+
+    private func recordCrumbs(_ motion: FrameMotion) {
+        guard motion.trackingNormal else { return }
+        crumbs.record(position: motion.position, yaw: motion.yaw)
+    }
+
+    private func updateHeadingLock() {
+        guard !handlingUtterance, !quietMode else { return }
+        let bearing = navigate.beacon?.bearing
+        switch headingLock.update(bearing: bearing) {
+        case .lockedOn:
+            Earcon.play(.headingLock)
+        case .lockedOut(let turnLeft):
+            Earcon.play(.headingOff)
+            say(turnLeft ? "Turn left." : "Turn right.", interrupt: false, allowNetwork: false)
+        case .none:
+            break
+        }
+        if let bearing, let hint = headingLock.seekHint(bearing: bearing) {
+            say(hint, allowNetwork: false)
         }
     }
 
@@ -453,9 +538,9 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     private func speakWarnings() {
-        // Freeroam: no automatic speech while walking — haptics only (ask with “Vantage…”).
+        // Freeroam callouts come from SceneTracker + CalloutPolicy (approach-only).
         guard mode == .navigate else { return }
-        guard !handlingUtterance, !quietMode, settings.speechFeedback || mode == .navigate else { return }
+        guard !handlingUtterance, !quietMode else { return }
         let now = Date()
         guard now >= awaitingRequestUntil else { return }
 
@@ -563,6 +648,36 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
                 say(Features.navigate
                     ? "Freeroam has no steps. Start Navigate from the menu, or ask what's ahead."
                     : "Freeroam has no steps. Ask me what's ahead.")
+            }
+            return
+        }
+        if lowered.contains("around me") || lowered.contains("what's around") || lowered.contains("whats around")
+            || lowered.contains("what is around") {
+            var objects = lastSceneObjects
+            if objects.isEmpty, let frame = session.currentFrame {
+                objects = SceneTracker.scan(frame: frame, distances: distances)
+                lastSceneObjects = objects
+            }
+            say(CalloutPolicy.aroundMeLine(objects: objects), interrupt: true, allowNetwork: false)
+            return
+        }
+        if lowered == "repeat" || lowered.hasPrefix("repeat ") || lowered.contains("say that again")
+            || lowered.contains("say again") {
+            if lastGuidanceLine.isEmpty {
+                say("Nothing to repeat yet.", interrupt: true, allowNetwork: false)
+            } else {
+                say(lastGuidanceLine, interrupt: true, allowNetwork: false)
+            }
+            return
+        }
+        if lowered.contains("i'm lost") || lowered.contains("im lost") || lowered == "lost"
+            || lowered.contains("help me find") || lowered.contains("where did i start")
+            || lowered.contains("return to start") || lowered.contains("go back to start")
+            || lowered.contains("take me back") {
+            if let line = crumbs.beginReturn() {
+                say(line, interrupt: true, allowNetwork: false)
+            } else {
+                say("I don't have a path back yet. Walk a little first.", interrupt: true, allowNetwork: false)
             }
             return
         }
@@ -806,7 +921,10 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     func say(_ text: String, interrupt: Bool = false, allowNetwork: Bool = true) -> Bool {
         caption = text
         let ok = speaker.say(text, interrupt: interrupt, allowNetwork: allowNetwork)
-        if ok { lastVoice = Date() }
+        if ok {
+            lastVoice = Date()
+            lastGuidanceLine = text
+        }
         return ok
     }
 

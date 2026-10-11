@@ -3,7 +3,7 @@ import Speech
 import SwiftUI
 import UIKit
 
-/// Feature switches. Navigate stays off until the landmark loop is redone; Freeroam is the demo.
+/// Feature switches. Navigate uses 3D landmark pins + signs + room-mesh detours.
 enum Features {
     static let navigate = true
 }
@@ -53,7 +53,7 @@ struct MainScreen: View {
             ModeCard(
                 title: "Freeroam",
                 subtitle: Features.navigate
-                    ? "Walk freely. Vibrations warn you about obstacles."
+                    ? "Walk freely. Vibrations and short callouts watch the path."
                     : "Walk freely. Vibrations warn you about obstacles. Tap anywhere here to start.",
                 systemImage: "figure.walk",
                 fill: Brand.teal
@@ -129,19 +129,23 @@ struct MainScreen: View {
     }
 
     private var welcomeLine: String {
-        Features.navigate
-            ? "Welcome to Vantage. Say Freeroam to walk with vibration warnings, or Navigate to be guided "
-                + "somewhere. You can also tap the top or bottom half of the screen."
-            : "Welcome to Vantage. Say Start, or tap anywhere on the screen, to begin Freeroam. "
-                + "Vibrations will warn you about obstacles."
+        let first = !UserDefaults.standard.bool(forKey: "vantage.hasHeardIntro")
+        if Features.navigate {
+            return first
+                ? "Welcome to Vantage. Say Freeroam, or Navigate. Say Vantage when you need me."
+                : "Main menu. Say Freeroam, or Navigate."
+        }
+        return first
+            ? "Welcome to Vantage. Say Start to begin. Say Vantage when you need me."
+            : "Main menu. Say Start."
     }
 
     private var menuLine: String {
-        Features.navigate ? "Main menu. Say Freeroam, or Navigate." : "Main menu. Say Start, or tap the screen, to begin."
+        Features.navigate ? "Main menu. Say Freeroam, or Navigate." : "Main menu. Say Start."
     }
 
     private var promptLine: String {
-        Features.navigate ? "Say Freeroam, or Navigate." : "Say Start, or tap the screen."
+        Features.navigate ? "Say Freeroam, or Navigate." : "Say Start."
     }
 
     private func greet() {
@@ -159,6 +163,7 @@ struct MainScreen: View {
         voiceTask = Task { @MainActor in
             await VoicePermissions.request()
             await speakThenListen(line)
+            UserDefaults.standard.set(true, forKey: "vantage.hasHeardIntro")
         }
     }
 

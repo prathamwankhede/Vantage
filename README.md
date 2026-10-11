@@ -34,13 +34,13 @@ Vantage is a voice-first guide worn on a chest lanyard. **Freeroam** watches the
 
 1. **Watches** left / ahead / right — LiDAR when available, camera distance when not.
 2. **Feels** — near / medium / far haptic bands; continuous buzz when something is very close. No beeps.
-3. **Asks** — wake word *"Vantage…"* for what's ahead, naming, and short scene answers.
-4. **Answers** with Gemini when online, on-device Gemma when offline, then Vision templates.
-5. **Night vision** — LiDAR depth on the camera when there’s light; auto full-frame when the room is dark. Color or **3D Spatial** shading (local, no cloud).
+3. **Callouts** — Freeroam speaks sparingly on approach (people, doors, stairs, elevators).
+4. **Asks** — wake word *"Vantage…"* for what's ahead, around me, repeat, return to start, naming.
+5. **Answers** with Gemini when online, on-device Gemma when offline, then Vision templates.
+6. **Navigate** — pin a landmark in 3D, OCR signs, mesh detours, spatial beacon + heading lock.
+7. **Night vision** — LiDAR depth on the camera when there’s light; auto full-frame when the room is dark. Color or **3D Spatial** shading (local, no cloud).
 
 Vantage doesn't replace a cane or a guide dog. It adds another sense to a phone people already carry.
-
-Landmark **Navigate** code exists but is **hidden** in the UI (`Features.navigate = false`) until it’s redone.
 
 ---
 
@@ -53,7 +53,9 @@ Landmark **Navigate** code exists but is **hidden** in the UI (`Features.navigat
 | **Gemini + Gemma** | Gemini when you're online; on-device Gemma when you're not. |
 | **Calm ElevenLabs voice** | Speaks on ask; disk cache + system voice fallback. |
 | **Always listening** | Wake word *"Vantage…"* — interrupt anytime. |
-| **Quiet mode** | Haptics only. |
+| **Quiet mode** | Haptics only (silences Freeroam callouts too). |
+| **Navigate** | 3D landmark pin · sign OCR · room-mesh detours · heading lock on the live beacon. |
+| **Return to start** | Clew-style ARKit breadcrumbs — no cloud. |
 | **Smart night vision** | Overlay in lit rooms · full LiDAR when dark · Color or 3D Spatial. |
 | **Blind-first UI** | Voice from launch, huge targets, ink / teal / cream, VoiceOver-friendly. |
 
@@ -103,15 +105,19 @@ flowchart LR
 
 ## Voice commands
 
-Always start with **"Vantage, …"** (from launch, say **"Start"** or tap to begin Freeroam.)
+Always start with **"Vantage, …"** (from launch, say **Freeroam** or **Navigate**.)
 
 | Say | Vantage does |
 |---|---|
-| `Start` / `Freeroam` | Begins Freeroam |
+| `Freeroam` / `Start` | Begins Freeroam |
+| `Navigate` + destination | Landmark guide with spatial beacon |
 | `Vantage` | Ready — ask what's ahead |
 | `… what's ahead?` / `what's in front of me?` | Describes the camera view |
+| `… around me` | Closest labeled things (on-device) |
+| `… repeat` | Repeats the last spoken line |
+| `… I'm lost` / `return to start` | Breadcrumb walk back |
 | `… name that` / `what is that?` | Names the nearest obstacle |
-| `… quiet on` / `speaking on` | Haptics-only or speak again |
+| `… quiet` / `speaking on` | Haptics-only or speak again |
 | `… night vision on` / `off` | LiDAR depth view (settings pick Color vs 3D Spatial) |
 | `… go back` / `main menu` | Leaves the session |
 
@@ -151,8 +157,12 @@ More detail: [`app/SETUP.md`](app/SETUP.md) · architecture notes: [`PLAN.md`](P
 
 | Piece | Role |
 |---|---|
-| `app/Engine/FreeroamEngine.swift` | Safety loop, wake word, scene Q&A |
-| `app/Engine/NavigateSession.swift` | Landmark Navigate (UI hidden for now) |
+| `app/Engine/FreeroamEngine.swift` | Safety loop, wake word, callouts, crumbs |
+| `app/Engine/NavigateSession.swift` | Landmark pin + beacon + Gemini steps |
+| `app/Core/NavTarget.swift` / `SignSpotter.swift` / `RoomMap.swift` | 3D pin, OCR, mesh detours |
+| `app/Core/HeadingLock.swift` | On-course / off-course from live beacon bearing |
+| `app/Core/SceneTracker.swift` / `CalloutPolicy.swift` | Freeroam approach callouts |
+| `app/Core/BreadcrumbTrail.swift` | Return-to-start keypoints |
 | `app/Core/DepthZoneAnalyzer.swift` | LiDAR left / center / right |
 | `app/Core/MonocularDistanceEstimator.swift` | Camera-only distance (no LiDAR) |
 | `app/Core/HapticPulser.swift` | Near / medium / far bands |
@@ -163,7 +173,7 @@ More detail: [`app/SETUP.md`](app/SETUP.md) · architecture notes: [`PLAN.md`](P
 | `app/Core/GeminiClient.swift` | Cloud vision Q&A |
 | `app/Core/Speaker.swift` | ElevenLabs + cache + system voice |
 | `app/Core/AlwaysListener.swift` | Wake-word listening |
-| `app/Spatial/` | HRTF / head tracking (for future Navigate) |
+| `app/Spatial/` | HRTF / head tracking for Navigate beacon |
 | `app/UI/` | Loading, main menu, session, settings |
 | `docs/branding/` | Logo + gallery thumbnail |
 | `scripts/` | Gemma download + phrase generator |

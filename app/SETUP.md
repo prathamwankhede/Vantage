@@ -50,6 +50,6 @@ or link: `sudo ln -s /opt/homebrew/bin/git-lfs "$(xcode-select -p)/usr/bin/git-l
 
 ## Demo tips
 
-- Freeroam is the product surface; Navigate is behind `Features.navigate`.
+- Freeroam is the demo surface; Navigate is on (`Features.navigate = true`) with 3D pins, signs, and mesh detours.
 - Night vision: overlay when lit, full-frame when dark; Color vs 3D Spatial in Detection settings.
-- Freeroam is haptics-first; headphones optional.
+- Freeroam is haptics-first with sparse approach callouts; Quiet mode silences speech. Headphones optional for Navigate HRTF.

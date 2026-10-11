@@ -9,7 +9,8 @@ enum ObstacleNamer {
     static let spokenNames: [String: String] = [
         "chair": "Chair", "armchair": "Chair", "folding_chair": "Chair",
         "table": "Table", "desk": "Desk", "sofa": "Couch", "door": "Door",
-        "stairs": "Stairs", "people": "Person", "adult": "Person",
+        "stairs": "Stairs", "staircase": "Stairs", "elevator": "Elevator",
+        "escalator": "Elevator", "people": "Person", "adult": "Person",
         "backpack": "Backpack", "bag": "Bag", "trash_can": "Trash can",
         "bench": "Bench", "bicycle": "Bicycle", "car": "Car", "dog": "Dog",
         "sign": "Sign", "street_sign": "Sign", "cabinet": "Cabinet",

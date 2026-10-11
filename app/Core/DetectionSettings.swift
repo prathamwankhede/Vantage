@@ -118,7 +118,8 @@ final class DetectionSettings: ObservableObject {
         mediumPattern = HapticPattern(rawValue: d.string(forKey: Keys.medium) ?? "") ?? .toot
         farPattern = HapticPattern(rawValue: d.string(forKey: Keys.far) ?? "") ?? .tap
         continuousCloseVibration = d.object(forKey: Keys.continuous) as? Bool ?? true
-        speechFeedback = d.object(forKey: Keys.speech) as? Bool ?? false
+        // Spoken Freeroam callouts on by default; Quiet mode still silences them.
+        speechFeedback = d.object(forKey: Keys.speech) as? Bool ?? true
         nightVision = d.object(forKey: Keys.nightVision) as? Bool ?? false
         nightVisionMode = NightVisionMode(rawValue: d.string(forKey: Keys.nightVisionMode) ?? "") ?? .color
         quickResponse = d.object(forKey: Keys.quick) as? Bool ?? true

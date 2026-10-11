@@ -2,31 +2,45 @@
 
 ## Thesis
 
-Chest-worn iPhone guide for blind and low-vision people. **Freeroam** watches the next few steps with sparse haptics. Voice on ask. Honesty over feature spam.
+Chest-worn iPhone guide for blind and low-vision people. **Freeroam** watches the next few steps with sparse haptics (plus approach-only spoken callouts). **Navigate** pins a landmark in 3D and guides with a live beacon. Voice on ask. Honesty over feature spam.
 
 **Tagline:** *Know what’s ahead. Move with confidence.*
 
-**HackRU Fall 2026:** Social Good track. Demo is Freeroam-first.
+**HackRU Fall 2026:** Social Good track. Demo Freeroam-first; Navigate is on (`Features.navigate = true`).
 
-**Non-goals (current demo):** MapKit, GPS routing, hand-to-object find/grab. Landmark **Navigate** stays out of the UI (`Features.navigate = false` in `MainScreen.swift`) until the landmark loop is trustworthy. Engine / HRTF code remains under `app/Engine/NavigateSession.swift` and `app/Spatial/`.
+**Non-goals:** MapKit / GPS as the sole router. Hand-to-object find/grab.
 
 ```mermaid
 flowchart TD
-  Main[Main: Freeroam] --> Freeroam[FreeroamEngine]
+  Main[Main: Freeroam or Navigate] --> Freeroam[FreeroamEngine]
   Freeroam --> Depth[DepthZoneAnalyzer]
   Freeroam --> Haptics[Core Haptics]
   Freeroam --> NV[NightVisionRenderer]
+  Freeroam --> Scene[SceneTracker + CalloutPolicy]
+  Freeroam --> Nav[NavigateSession]
+  Nav --> Pin[NavTarget 3D pin]
+  Nav --> Signs[SignSpotter OCR]
+  Nav --> Mesh[RoomMap mesh detours]
+  Freeroam --> Head[HeadingLock on beacon]
+  Freeroam --> Crumb[BreadcrumbTrail return-to-start]
   Ask[Wake: Vantage] --> SceneAI[Gemini then Gemma then templates]
 ```
 
 ## Freeroam
 
-1. Haptics only while walking (near / medium / far; continuous close buzz).
-2. Voice only on ask (“Vantage…”).
-3. Optional night vision (voice toggle + Detection settings):
+1. Haptics while walking (near / medium / far; continuous close buzz).
+2. Sparse spoken callouts via `SceneTracker` + `CalloutPolicy` (approach-only; door / stairs / elevator earcon).
+3. Voice commands: around me, repeat, lost / return to start (Clew-style crumbs), plus scene Q&A.
+4. Optional night vision (voice toggle + Detection settings):
    - **Lit room:** translucent depth overlay on the live camera.
    - **Dark room:** auto full-frame opaque LiDAR (camera luma hysteresis).
    - **Imaging:** Color (distance rainbow) or **3D Spatial** (depth normals + lighting).
+
+## Navigate (teammate stack + our heading)
+
+Keep their loop: Gemini finds a landmark → LiDAR pins it (`NavTarget`) → `SignSpotter` OCR → `RoomMap` mesh A* detours → distance callouts + spatial beacon.
+
+Ours on top: `HeadingLock` on the **live** beacon bearing (updates through turns/curves; not a frozen compass). Short start lines.
 
 ## Ask / offline
 
@@ -36,10 +50,10 @@ TTS: bundled `app/Phrases/` → `Documents/TTSCache` → ElevenLabs → system v
 
 ## UI
 
-Loading ripples → Main (Start / Freeroam) → session. Palette: ink / teal / cream (`app/Design/Brand.swift`). Huge targets; voice from launch.
+Loading ripples → Main (short first-launch greeting) → Freeroam / Navigate. Palette: ink / teal / cream (`app/Design/Brand.swift`). Huge targets; voice from launch.
 
 ## Accuracy rules
 
-- Name on ask, not every frame.
+- Freeroam callouts on approach only, with cooldowns.
 - Zone hysteresis; chest-height band.
 - Never block the safety loop on Gemini.

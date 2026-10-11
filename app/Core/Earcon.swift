@@ -8,6 +8,12 @@ enum Earcon {
     case listening
     /// Soft falling note: got the request, working on it.
     case heard
+    /// On Navigate heading: chest faces the beacon.
+    case headingLock
+    /// Left the beacon heading.
+    case headingOff
+    /// Door / stairs / elevator callout.
+    case landmark
 
     private static var players: [Earcon: AVAudioPlayer] = [:]
 
@@ -23,6 +29,9 @@ enum Earcon {
         switch earcon {
         case .listening: notes = [(880, 0.075), (1318.5, 0.16)]   // A5 → E6
         case .heard: notes = [(1046.5, 0.06), (784, 0.12)]        // C6 → G5
+        case .headingLock: notes = [(659, 0.05), (988, 0.1)]      // E5 → B5
+        case .headingOff: notes = [(740, 0.08)]                   // F#5
+        case .landmark: notes = [(523, 0.06), (659, 0.08)]        // C5 → E5
         }
         let player = try? AVAudioPlayer(data: wav(notes), fileTypeHint: AVFileType.wav.rawValue)
         player?.volume = earcon == .listening ? 0.7 : 0.45
