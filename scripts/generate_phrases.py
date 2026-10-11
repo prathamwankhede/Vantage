@@ -24,11 +24,13 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "app" / "Phrases"
 SECRETS = ROOT / "app" / "Secrets.swift"
 
+# Keep in sync with spoken lines in MainScreen / FreeroamEngine (Freeroam-first demo).
 PHRASES = [
-    "Welcome to Vantage. Say Freeroam to walk with vibration warnings, or Navigate to be guided somewhere.",
-    "Main menu. Say Freeroam, or Navigate.",
-    "Say Freeroam, or Navigate.",
-    "Sorry, I didn't catch that. Say Freeroam, or Navigate.",
+    "Welcome to Vantage. Say Start, or tap anywhere on the screen, to begin Freeroam. Vibrations will warn you about obstacles.",
+    "Main menu. Say Start, or tap the screen, to begin.",
+    "Say Start, or tap the screen.",
+    "Sorry, I didn't catch that. Say Start, or tap the screen.",
+    "Navigate isn't available right now. Say Start to begin Freeroam.",
     "Freeroam. Haptics watch the path. Say Vantage when you need me.",
     "Hello, this is Vantage. Know what's ahead. Move with confidence.",
     "Clear path",
@@ -46,7 +48,7 @@ PHRASES = [
     "Outdoor alert mode.",
     "Universal alert mode.",
     "Great. You can go back when you're ready.",
-    "Freeroam has no steps. Start Navigate from the menu, or ask what's ahead.",
+    "Freeroam has no steps. Ask me what's ahead.",
     "I can't see a frame right now.",
     "Nothing close enough to name.",
     "I don't have a clear name for that.",

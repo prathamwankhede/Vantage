@@ -20,7 +20,7 @@
   <img alt="HackRU Fall 2026" src="https://img.shields.io/badge/HackRU-Fall%202026-cc0033" />
 </p>
 
-<sub>Built at <b>HackRU Fall 2026</b> · Busch Student Center · Oct 10–11, 2026</sub>
+<sub>Built at <b>HackRU Fall 2026</b> · Busch Student Center · Oct 10–11, 2026 · Social Good</sub>
 
 </div>
 
@@ -36,9 +36,11 @@ Vantage is a voice-first guide worn on a chest lanyard. **Freeroam** watches the
 2. **Feels** — near / medium / far haptic bands; continuous buzz when something is very close. No beeps.
 3. **Asks** — wake word *"Vantage…"* for what's ahead, naming, and short scene answers.
 4. **Answers** with Gemini when online, on-device Gemma when offline, then Vision templates.
-5. **Night vision** — local LiDAR depth overlay, toggled by voice (no cloud).
+5. **Night vision** — LiDAR depth on the camera when there’s light; auto full-frame when the room is dark. Color or **3D Spatial** shading (local, no cloud).
 
 Vantage doesn't replace a cane or a guide dog. It adds another sense to a phone people already carry.
+
+Landmark **Navigate** code exists but is **hidden** in the UI (`Features.navigate = false`) until it’s redone.
 
 ---
 
@@ -49,10 +51,11 @@ Vantage doesn't replace a cane or a guide dog. It adds another sense to a phone 
 | **Offline safety** | Depth + haptics run on the phone. No network needed to feel *"too close."* |
 | **Any modern iPhone** | LiDAR Pro preferred. Without it, Vision estimates distance from the camera. |
 | **Gemini + Gemma** | Gemini when you're online; on-device Gemma when you're not. |
-| **Calm ElevenLabs voice** | Speaks on ask; system voice fallback if the network fails. |
+| **Calm ElevenLabs voice** | Speaks on ask; disk cache + system voice fallback. |
 | **Always listening** | Wake word *"Vantage…"* — interrupt anytime. |
 | **Quiet mode** | Haptics only. |
-| **Blind-first UI** | Voice from launch, huge mode cards, ink / teal / cream, VoiceOver-friendly. |
+| **Smart night vision** | Overlay in lit rooms · full LiDAR when dark · Color or 3D Spatial. |
+| **Blind-first UI** | Voice from launch, huge targets, ink / teal / cream, VoiceOver-friendly. |
 
 ---
 
@@ -70,6 +73,7 @@ flowchart LR
     subgraph Device["On-device"]
         AR["ARKit"]
         DEPTH["LiDAR zones / camera distance"]
+        NV["NightVisionRenderer"]
         ENG["FreeroamEngine"]
         SPK["Speaker"]
         LISTEN["AlwaysListener"]
@@ -83,6 +87,7 @@ flowchart LR
     end
 
     AR --> DEPTH --> ENG
+    AR --> NV --> SCREEN
     MIC --> LISTEN --> ENG
     ENG --> HAP --> BODY
     ENG --> SPK --> EAR
@@ -98,15 +103,16 @@ flowchart LR
 
 ## Voice commands
 
-Always start with **"Vantage, …"**
+Always start with **"Vantage, …"** (from launch, say **"Start"** or tap to begin Freeroam.)
 
 | Say | Vantage does |
 |---|---|
+| `Start` / `Freeroam` | Begins Freeroam |
 | `Vantage` | Ready — ask what's ahead |
 | `… what's ahead?` / `what's in front of me?` | Describes the camera view |
 | `… name that` / `what is that?` | Names the nearest obstacle |
 | `… quiet on` / `speaking on` | Haptics-only or speak again |
-| `… night vision on` / `off` | LiDAR depth overlay |
+| `… night vision on` / `off` | LiDAR depth view (settings pick Color vs 3D Spatial) |
 | `… go back` / `main menu` | Leaves the session |
 
 ---
@@ -127,16 +133,17 @@ open Vantage.xcodeproj
 
 1. Add Gemini + ElevenLabs keys in `Secrets.swift`.
 2. Set your `DEVELOPMENT_TEAM` in `Local.xcconfig`.
-3. Run on a **physical iPhone**. Allow Camera, Mic, Speech, Motion.
+3. Run on a **physical iPhone** (LiDAR recommended). Allow Camera, Mic, Speech, Motion.
 4. Say **"Start"** or tap Freeroam, then **"Vantage, what's ahead?"**
+5. Optional: **"night vision on"** — Color / 3D Spatial in Detection settings.
 
-Optional phrase bank:
+Optional phrase bank (needs a valid ElevenLabs key):
 
 ```bash
 python3 scripts/generate_phrases.py
 ```
 
-More detail: [`app/SETUP.md`](app/SETUP.md)
+More detail: [`app/SETUP.md`](app/SETUP.md) · architecture notes: [`PLAN.md`](PLAN.md)
 
 ---
 
@@ -145,17 +152,20 @@ More detail: [`app/SETUP.md`](app/SETUP.md)
 | Piece | Role |
 |---|---|
 | `app/Engine/FreeroamEngine.swift` | Safety loop, wake word, scene Q&A |
+| `app/Engine/NavigateSession.swift` | Landmark Navigate (UI hidden for now) |
 | `app/Core/DepthZoneAnalyzer.swift` | LiDAR left / center / right |
 | `app/Core/MonocularDistanceEstimator.swift` | Camera-only distance (no LiDAR) |
 | `app/Core/HapticPulser.swift` | Near / medium / far bands |
-| `app/Core/NightVisionRenderer.swift` | LiDAR depth overlay |
+| `app/Core/NightVisionRenderer.swift` | Color + 3D Spatial; overlay ↔ full-frame by luma |
+| `app/Core/DetectionSettings.swift` | Alert modes, haptics, night-vision mode |
 | `app/Core/SceneAI.swift` | Gemini → Gemma → templates |
 | `app/Core/GemmaClient.swift` | On-device scene answers |
 | `app/Core/GeminiClient.swift` | Cloud vision Q&A |
 | `app/Core/Speaker.swift` | ElevenLabs + cache + system voice |
 | `app/Core/AlwaysListener.swift` | Wake-word listening |
-| `app/UI/` | Loading, main menu, session |
-| `docs/branding/` | Logo + Devpost thumbnail |
+| `app/Spatial/` | HRTF / head tracking (for future Navigate) |
+| `app/UI/` | Loading, main menu, session, settings |
+| `docs/branding/` | Logo + gallery thumbnail |
 | `scripts/` | Gemma download + phrase generator |
 
 ---
