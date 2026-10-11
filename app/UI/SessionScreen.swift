@@ -131,7 +131,8 @@ struct SessionScreen: View {
             }
 
             if mode == .navigate {
-                Text(engine.navigateStepText.isEmpty ? "Looking for landmarks…" : engine.navigateStepText)
+                Text(engine.navTargetStatus
+                    ?? (engine.navigateStepText.isEmpty ? "Looking for landmarks…" : engine.navigateStepText))
                     .font(.system(size: 22, weight: .bold, design: .rounded))
                     .foregroundStyle(Brand.cream)
                     .fixedSize(horizontal: false, vertical: true)

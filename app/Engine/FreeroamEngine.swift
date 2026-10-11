@@ -26,6 +26,8 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     @Published private(set) var lastHeard = ""
     @Published var navigateGoal = ""
     @Published private(set) var navigateStepText = ""
+    /// Live line for the status panel while a target is pinned: "Door · 12 ft · slightly left".
+    @Published private(set) var navTargetStatus: String?
     @Published private(set) var mode: Mode = .freeroam
     /// Walking, from ARKit's tracked position. Spoken directions are only useful while moving.
     @Published private(set) var isMoving = false
@@ -99,6 +101,8 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         let timestamp: TimeInterval
         let position: SIMD2<Float>
         let trackingNormal: Bool
+        /// Full camera pose, for Navigate's bearing/distance to a pinned target.
+        let cameraTransform: simd_float4x4
     }
 
     func start(mode: Mode, goal: String = "") {
@@ -144,6 +148,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     func stop() {
         healthTask?.cancel()
         navigate.stop()
+        navTargetStatus = nil
         listener.stop()
         speaker.stop()
         spatial.stop()
@@ -241,7 +246,8 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         return FrameMotion(
             timestamp: frame.timestamp,
             position: SIMD2(translation.x, translation.z),
-            trackingNormal: normal
+            trackingNormal: normal,
+            cameraTransform: frame.camera.transform
         )
     }
 
@@ -265,8 +271,21 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
                 self.nightVisionFullFrame = fullFrame
             }
             self.updateMotion(motion)
+            if self.mode == .navigate {
+                self.navigate.update(camera: motion.cameraTransform)
+                self.refreshNavStatus()
+            }
             self.ingest(distances)
         }
+    }
+
+    private func refreshNavStatus() {
+        var status: String?
+        if let target = navigate.target, let guidance = navigate.guidance, let beacon = navigate.beacon {
+            let distance = target.measured ? "\(NavGuidance.feet(guidance.distance)) ft" : "far"
+            status = "\(NavGuidance.capitalized(target.label)) · \(distance) · \(NavGuidance.directionWords(beacon.bearing))"
+        }
+        if status != navTargetStatus { navTargetStatus = status }
     }
 
     nonisolated func session(_ session: ARSession, didFailWithError error: Error) {
@@ -368,24 +387,38 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
             return
         }
 
-        // Navigate: HRTF spatial tone toward hazard + wash; haptics still pulse.
-        guard let alert else {
-            haptics.setContinuousClose(false)
-            spatial.drive(pan: 0, closeness: 0, headphonesConnected: headphones.usingHeadphones)
-            return
-        }
-        let closeness = Double(alert.intensity)
-        spatial.drive(
-            bearingRadians: alert.zone.bearingRadians,
-            distanceMeters: alert.distance,
-            closeness: closeness,
-            listener: headphones.listener,
-            headphonesConnected: headphones.usingHeadphones
-        )
-        washSide = alert.zone
-        washStrength = closeness
+        // Navigate: a hazard within 2 m takes the spatial tone; otherwise the beacon sits on the pinned
+        // target. Haptics still pulse for any hazard.
         haptics.setContinuousClose(false)
-        if now.timeIntervalSince(lastPulse) >= alert.interval {
+        if let alert, alert.distance < AlertPolicy.announceDistance {
+            let closeness = Double(alert.intensity)
+            spatial.drive(
+                bearingRadians: alert.zone.bearingRadians,
+                distanceMeters: alert.distance,
+                closeness: closeness,
+                listener: headphones.listener,
+                headphonesConnected: headphones.usingHeadphones
+            )
+            washSide = alert.zone
+            washStrength = closeness
+        } else if let beacon = navigate.beacon {
+            // A little louder as you close in.
+            let closeness = 0.35 + 0.35 * Double(1 - min(beacon.distance, 10) / 10)
+            spatial.drive(
+                bearingRadians: beacon.bearing,
+                distanceMeters: beacon.distance,
+                closeness: closeness,
+                listener: headphones.listener,
+                headphonesConnected: headphones.usingHeadphones
+            )
+            washSide = NavGuidance.zone(for: beacon.bearing)
+            washStrength = 0.45
+        } else {
+            spatial.drive(pan: 0, closeness: 0, headphonesConnected: headphones.usingHeadphones)
+            washSide = nil
+            washStrength = 0
+        }
+        if let alert, now.timeIntervalSince(lastPulse) >= alert.interval {
             lastPulse = now
             haptics.play(settings.pattern(for: alert.band), intensity: alert.intensity)
         }
@@ -712,28 +745,14 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         return ok
     }
 
-    func snapshotJPEG() -> Data? {
-        guard let frame = session.currentFrame else { return nil }
-        return FrameSnapshot(frame: frame)?.jpeg
+    /// Photo and depth from the same instant, so a point Gemini picks in the photo can be pinned in 3D.
+    func navigateSnapshot() -> (jpeg: Data, depth: DepthSnapshot?)? {
+        guard let frame = session.currentFrame, let jpeg = FrameSnapshot(frame: frame)?.jpeg else { return nil }
+        return (jpeg, DepthSnapshot(frame: frame))
     }
 
     func updateNavigateStep(_ text: String) {
         navigateStepText = text
-    }
-
-    func setNavigateBearing(_ zone: Zone?) {
-        guard mode == .navigate, let zone else { return }
-        if alert == nil || (alert?.distance ?? 99) > AlertPolicy.announceDistance {
-            spatial.drive(
-                bearingRadians: zone.bearingRadians,
-                distanceMeters: 1.4,
-                closeness: 0.5,
-                listener: headphones.listener,
-                headphonesConnected: headphones.usingHeadphones
-            )
-            washSide = zone
-            washStrength = 0.45
-        }
     }
 
     // MARK: - Session hygiene

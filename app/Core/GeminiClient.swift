@@ -14,6 +14,26 @@ enum GeminiClient {
         let confidence: String
         let arrived: Bool
         let unsure: Bool
+        /// Landmark box in the upright photo: [ymin, xmin, ymax, xmax], each 0–1000 (Gemini's box format).
+        var box2D: [Double]? = nil
+        /// The landmark is the destination itself, not a waypoint on the way.
+        var isGoal: Bool? = nil
+
+        enum CodingKeys: String, CodingKey {
+            case landmark, action, bearing, confidence, arrived, unsure
+            case box2D = "box_2d"
+            case isGoal = "is_goal"
+        }
+
+        /// Centre of the landmark box, normalized 0–1 with a top-left origin.
+        var uprightCenter: SIMD2<Float>? {
+            guard let box = box2D, box.count == 4 else { return nil }
+            let (ymin, xmin, ymax, xmax) = (box[0], box[1], box[2], box[3])
+            guard ymax > ymin, xmax > xmin else { return nil }
+            let center = SIMD2(Float((xmin + xmax) / 2000), Float((ymin + ymax) / 2000))
+            guard (0...1).contains(center.x), (0...1).contains(center.y) else { return nil }
+            return center
+        }
 
         var spoken: String {
             if unsure || confidence.lowercased() == "low" {
@@ -64,9 +84,15 @@ enum GeminiClient {
         visible in this chest-worn camera photo. There is no map and no GPS. \
         Destination: \(goal). \
         Previous step you gave: \(lastStep.isEmpty ? "(none)" : lastStep). \
+        Pick ONE visible landmark to walk to next — the destination itself if you can see it, otherwise \
+        something on the way such as a door, a hallway opening, a counter, or a sign. Prefer things at walking \
+        level on the floor ahead. \
         Reply ONLY with JSON matching this schema: \
-        {"landmark":"short visible landmark or empty","action":"one short imperative under 16 words",\
-        "bearing":"left|ahead|right","confidence":"high|medium|low","arrived":false,"unsure":false}. \
+        {"landmark":"short name of that landmark, or empty","action":"one short imperative under 16 words",\
+        "bearing":"left|ahead|right","confidence":"high|medium|low","arrived":false,"unsure":false,\
+        "box_2d":[ymin,xmin,ymax,xmax],"is_goal":false}. \
+        box_2d is a tight box around that landmark in this photo, each value 0-1000; use [] if there is no \
+        useful landmark. is_goal is true only if the landmark is the destination itself. \
         If the destination appears reached, set arrived true. If you cannot see useful clues, set unsure true \
         and say so in action. Never invent room numbers or street names that are not readable in the photo. \
         Don't send them toward a side the sensors say is blocked within 1 metre.
