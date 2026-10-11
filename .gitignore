@@ -1,16 +1,24 @@
+# Secrets & local signing (never commit)
 Secrets.swift
+app/Local.xcconfig
 local.settings.json
 .env
 .env.*
+
+# Xcode / build
 node_modules/
 .DS_Store
 xcuserdata/
-__pycache__/
 *.xcuserstate
 DerivedData/
 build/
 app/*.xcodeproj/
 !app/project.yml
+*.swp
+.idea/
+
+# Python
+__pycache__/
 
 # On-device Gemma / LiteRT-LM weights (too large for git)
 *.litertlm
@@ -19,5 +27,3 @@ app/Models/**
 !app/Models/README.md
 !app/Models/.gitkeep
 
-
-app/Local.xcconfig

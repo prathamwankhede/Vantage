@@ -21,7 +21,7 @@ flowchart TD
   Nav --> Pin[NavTarget 3D pin]
   Nav --> Signs[SignSpotter OCR]
   Nav --> Mesh[RoomMap mesh detours]
-  Freeroam --> Head[HeadingLock on beacon]
+  Freeroam --> Head[HeadingLock + HeadingHaptics]
   Freeroam --> Crumb[BreadcrumbTrail return-to-start]
   Ask[Wake: Vantage] --> SceneAI[Gemini then Gemma then templates]
 ```
@@ -36,15 +36,15 @@ flowchart TD
    - **Dark room:** auto full-frame opaque LiDAR (camera luma hysteresis).
    - **Imaging:** Color (distance rainbow) or **3D Spatial** (depth normals + lighting).
 
-## Navigate (teammate stack + our heading)
+## Navigate
 
-Keep their loop: Gemini finds a landmark → LiDAR pins it (`NavTarget`) → `SignSpotter` OCR → `RoomMap` mesh A* detours → distance callouts + spatial beacon.
+Gemini finds a landmark → LiDAR pins it (`NavTarget`) → `SignSpotter` OCR → `RoomMap` steers around walls and bends → distance callouts + HRTF beacon.
 
-Ours on top: `HeadingLock` on the **live** beacon bearing (updates through turns/curves; not a frozen compass). Short start lines.
+Heading: `HeadingLock` on the **live** beacon bearing (not a frozen compass) plus Compass-style ticks and a Level-style lock click (`HeadingHaptics`). Cone adapts with distance.
 
 ## Ask / offline
 
-Gemini online → Gemma (LiteRT-LM) on device → Vision templates. Depth safety never waits on the network.
+Gemini online → Gemma (LiteRT-LM) on device → Vision templates. Depth safety never waits on the network. Timeouts are reported separately from “offline.”
 
 TTS: bundled `app/Phrases/` → `Documents/TTSCache` → ElevenLabs → system voice.
 

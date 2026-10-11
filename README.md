@@ -42,6 +42,14 @@ Vantage is a voice-first guide worn on a chest lanyard. **Freeroam** watches the
 
 Vantage doesn't replace a cane or a guide dog. It adds another sense to a phone people already carry.
 
+### HackRU Fall 2026
+
+| | |
+|---|---|
+| **Track** | Social Good |
+| **Demo** | Freeroam first (local depth + haptics). Navigate as the encore (3D pin + beacon). |
+| **Pitch** | *Know what's ahead. Move with confidence.* Danger never waits on Wi‑Fi. |
+
 ---
 
 ## Highlights
@@ -150,11 +158,11 @@ xcodegen generate
 open Vantage.xcodeproj
 ```
 
-1. Add Gemini + ElevenLabs keys in `Secrets.swift`.
+1. Add Gemini + ElevenLabs keys in `Secrets.swift` (gitignored — never commit it).
 2. Set your `DEVELOPMENT_TEAM` in `Local.xcconfig`.
-3. Run on a **physical iPhone** (LiDAR recommended). Allow Camera, Mic, Speech, Motion.
-4. Say **"Start"** or tap Freeroam, then **"Vantage, what's ahead?"**
-5. Optional: **"night vision on"** — Color / 3D Spatial in Detection settings.
+3. Run on a **physical iPhone** (LiDAR Pro recommended). Allow Camera, Mic, Speech, Motion.
+4. Say **Freeroam** or **Navigate**, then **"Vantage, what's ahead?"**
+5. Optional: **"night vision on"** — Color / 3D Spatial in Detection settings. AirPods help Navigate HRTF.
 
 Optional phrase bank (needs a valid ElevenLabs key):
 
