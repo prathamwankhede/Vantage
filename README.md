@@ -171,7 +171,7 @@ ARKit · Core Haptics · Apple Vision · Apple Speech · ElevenLabs · Google Ge
 | Name | Links |
 |---|---|
 | **Farhan Mir** | [GitHub](https://github.com/farhanmir) · [LinkedIn](https://www.linkedin.com/in/farhan-mir) |
-| **Pratham Wankhede** | [GitHub](https://github.com/prathamwankhede) |
+| **Pratham Wankhede** | [GitHub](https://github.com/prathamwankhede) · [LinkedIn](https://www.linkedin.com/in/pratham-wankhede/) |
 
 ---
 
