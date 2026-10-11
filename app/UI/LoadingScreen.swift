@@ -17,14 +17,17 @@ struct LoadingScreen: View {
             VStack(spacing: 28) {
                 ZStack {
                     TealRipple()
-                        .frame(width: 140, height: 140)
+                        .frame(width: 160, height: 160)
                     Circle()
                         .fill(Brand.teal.opacity(glow ? 0.35 : 0.12))
-                        .frame(width: 160, height: 160)
+                        .frame(width: 180, height: 180)
                         .blur(radius: 24)
-                    Text("V")
-                        .font(.system(size: 72, weight: .heavy, design: .rounded))
-                        .foregroundStyle(Brand.cream)
+                    Image("VantageLogo")
+                        .resizable()
+                        .scaledToFit()
+                        .frame(width: 132, height: 132)
+                        .clipShape(RoundedRectangle(cornerRadius: 28, style: .continuous))
+                        .shadow(color: Brand.teal.opacity(0.35), radius: 16, y: 4)
                 }
                 .offset(y: rise ? 0 : 28)
                 .opacity(rise ? 1 : 0)
