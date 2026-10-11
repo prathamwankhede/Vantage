@@ -38,6 +38,8 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     private var listenTimeout: Task<Void, Never>?
     /// Optional LiDAR night-vision depth image (full frame, not L/C/R bars).
     @Published private(set) var nightVisionImage: CGImage?
+    /// True when the room is dark enough that we replace the camera with full night vision.
+    @Published private(set) var nightVisionFullFrame = false
 
     let session = ARSession()
     let headphones = HeadphoneMotion()
@@ -78,6 +80,11 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     private nonisolated(unsafe) var lastMonoTime = Date.distantPast
     /// Mirrors settings.nightVision for the ARKit delegate queue.
     private nonisolated(unsafe) var renderNightVision = false
+    private nonisolated(unsafe) var nightVisionModeCached: NightVisionMode = .color
+    /// Hysteresis so full-frame night vision doesn’t flicker at the threshold.
+    private nonisolated(unsafe) var sceneIsDark = false
+    private nonisolated(unsafe) var darkStreak = 0
+    private nonisolated(unsafe) var lightStreak = 0
     private var lastSessionRun = Date.distantPast
     /// True while a frame update is queued for the main actor. Frames that arrive meanwhile are
     /// skipped instead of queued — each queued update used to hold its ARFrame, and ARKit stops
@@ -179,14 +186,43 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         }
 
         let distances = DepthZoneAnalyzer.nearestPerZone(in: depth).distances
-        // Only render while the overlay is on. Smoothed depth (averaged over frames) flickers less.
+        // Only render while night vision is on. Smoothed depth flickers less.
         var nightCG: CGImage?
+        var fullFrame = false
         // Skipped when the main actor hasn't taken the last frame yet — this one would be dropped.
         if renderNightVision, !mainUpdatePending.withLock({ $0 }),
            let overlayDepth = frame.smoothedSceneDepth ?? frame.sceneDepth {
-            nightCG = NightVisionRenderer.cgImage(from: overlayDepth)
+            fullFrame = updateDarkness(luma: NightVisionRenderer.cameraLuma(of: frame))
+            nightCG = NightVisionRenderer.cgImage(
+                from: overlayDepth,
+                camera: frame.camera,
+                mode: nightVisionModeCached,
+                opaque: fullFrame
+            )
+        } else if !renderNightVision {
+            sceneIsDark = false
+            darkStreak = 0
+            lightStreak = 0
         }
-        deliver(distances: distances, motion: Self.motion(of: frame), nightImage: nightCG)
+        deliver(distances: distances, motion: Self.motion(of: frame), nightImage: nightCG, fullFrame: fullFrame)
+    }
+
+    /// Enter full night vision after several dark frames; leave after several lit ones.
+    private nonisolated func updateDarkness(luma: Float) -> Bool {
+        // ~0–255 Y plane. A lit room is usually well above 40; pitch dark sits under ~18.
+        if luma < 18 {
+            darkStreak += 1
+            lightStreak = 0
+            if darkStreak >= 4 { sceneIsDark = true }
+        } else if luma > 32 {
+            lightStreak += 1
+            darkStreak = 0
+            if lightStreak >= 4 { sceneIsDark = false }
+        } else {
+            darkStreak = 0
+            lightStreak = 0
+        }
+        return sceneIsDark
     }
 
     /// Sets the flag if it was clear; false if it's already set.
@@ -210,13 +246,24 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
     }
 
     /// Hands one frame's results to the main actor, dropping it if the last hand-off is still pending.
-    private nonisolated func deliver(distances: SIMD3<Float>, motion: FrameMotion, nightImage: CGImage?) {
+    private nonisolated func deliver(
+        distances: SIMD3<Float>,
+        motion: FrameMotion,
+        nightImage: CGImage?,
+        fullFrame: Bool = false
+    ) {
         guard Self.claim(mainUpdatePending) else { return }
         Task { @MainActor in
             defer { self.mainUpdatePending.withLock { $0 = false } }
             self.renderNightVision = self.settings.nightVision
-            if !self.settings.nightVision { self.nightVisionImage = nil }
-            else if let nightImage { self.nightVisionImage = nightImage }
+            self.nightVisionModeCached = self.settings.nightVisionMode
+            if !self.settings.nightVision {
+                self.nightVisionImage = nil
+                self.nightVisionFullFrame = false
+            } else {
+                if let nightImage { self.nightVisionImage = nightImage }
+                self.nightVisionFullFrame = fullFrame
+            }
             self.updateMotion(motion)
             self.ingest(distances)
         }
@@ -538,6 +585,7 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         if wantsOff && !wantsOn {
             settings.nightVision = false
             nightVisionImage = nil
+            nightVisionFullFrame = false
             say("Night vision off.", interrupt: true, allowNetwork: false)
             return
         }
@@ -549,7 +597,10 @@ final class FreeroamEngine: NSObject, ObservableObject, ARSessionDelegate {
         }
         // "night vision" / "toggle night vision" with no clear on/off → toggle
         settings.nightVision.toggle()
-        if !settings.nightVision { nightVisionImage = nil }
+        if !settings.nightVision {
+            nightVisionImage = nil
+            nightVisionFullFrame = false
+        }
         say(settings.nightVision ? "Night vision on." : "Night vision off.",
             interrupt: true, allowNetwork: false)
     }

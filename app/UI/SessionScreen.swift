@@ -17,7 +17,8 @@ struct SessionScreen: View {
             Color.black.ignoresSafeArea()
             CameraPreview(
                 session: engine.session,
-                depthOverlay: mode == .freeroam && settings.nightVision ? engine.nightVisionImage : nil
+                depthOverlay: mode == .freeroam && settings.nightVision ? engine.nightVisionImage : nil,
+                fullFrame: mode == .freeroam && settings.nightVision && engine.nightVisionFullFrame
             )
             .ignoresSafeArea()
             .accessibilityHidden(true)
@@ -191,7 +192,13 @@ struct SessionScreen: View {
         if mode == .freeroam {
             parts.append("Haptics")
             parts.append("\(settings.alertMode.title) range")
-            if settings.nightVision { parts.append("Night vision") }
+            if settings.nightVision {
+                if engine.nightVisionFullFrame {
+                    parts.append("Night vision · full")
+                } else {
+                    parts.append("Night vision · \(settings.nightVisionMode.title)")
+                }
+            }
         } else {
             if engine.quietMode { parts.append("Quiet") }
             parts.append(engine.headphoneStatus)
@@ -233,6 +240,8 @@ struct CameraPreview: UIViewRepresentable {
     let session: ARSession
     /// Night-vision depth image in the sensor's native orientation; nil hides the overlay.
     var depthOverlay: CGImage?
+    /// When true, depth fully covers the camera (dark room). Lit rooms keep the translucent overlay.
+    var fullFrame: Bool = false
 
     func makeUIView(context: Context) -> DepthOverlayARView {
         let view = DepthOverlayARView(frame: .zero)
@@ -244,7 +253,7 @@ struct CameraPreview: UIViewRepresentable {
     }
 
     func updateUIView(_ uiView: DepthOverlayARView, context: Context) {
-        uiView.setDepthOverlay(depthOverlay)
+        uiView.setDepthOverlay(depthOverlay, fullFrame: fullFrame)
     }
 }
 
@@ -265,7 +274,7 @@ final class DepthOverlayARView: ARSCNView {
         overlayLayer.minificationFilter = .linear
         // No implicit animations — a default fade on every new frame makes the overlay trail behind.
         overlayLayer.actions = ["contents": NSNull(), "bounds": NSNull(), "position": NSNull(),
-                                "transform": NSNull(), "hidden": NSNull()]
+                                "transform": NSNull(), "hidden": NSNull(), "opacity": NSNull()]
         overlayLayer.isHidden = true
         layer.addSublayer(overlayLayer)
     }
@@ -274,11 +283,13 @@ final class DepthOverlayARView: ARSCNView {
         fatalError("init(coder:) has not been implemented")
     }
 
-    func setDepthOverlay(_ image: CGImage?) {
+    func setDepthOverlay(_ image: CGImage?, fullFrame: Bool = false) {
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         overlayLayer.contents = image
         overlayLayer.isHidden = image == nil
+        // Lit: soft overlay so the camera still reads. Dark: solid cover.
+        overlayLayer.opacity = fullFrame ? 1 : 0.85
         if let image {
             overlaySize = CGSize(width: image.width, height: image.height)
             layoutOverlay()

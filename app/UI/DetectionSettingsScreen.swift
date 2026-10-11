@@ -62,8 +62,19 @@ struct DetectionSettingsScreen: View {
             }
 
             Section("Night Vision") {
-                Toggle("LiDAR Night Vision Overlay", isOn: $settings.nightVision)
-                Text("Uses the depth sensor to show the scene in the dark — full frame, not side bars.")
+                Toggle("LiDAR Night Vision", isOn: $settings.nightVision)
+                if settings.nightVision {
+                    Picker("Imaging", selection: $settings.nightVisionMode) {
+                        ForEach(NightVisionMode.allCases) { mode in
+                            Text(mode.title).tag(mode)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    Text(settings.nightVisionMode.detail)
+                        .font(.footnote)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Overlay on the camera when there’s light. In a dark room it switches to full night vision automatically.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

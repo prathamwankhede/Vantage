@@ -79,6 +79,10 @@ final class DetectionSettings: ObservableObject {
     @Published var nightVision: Bool {
         didSet { UserDefaults.standard.set(nightVision, forKey: Keys.nightVision) }
     }
+    /// Color rainbow vs 3D Spatial shading. Overlay stays in lit rooms; full-frame only when dark.
+    @Published var nightVisionMode: NightVisionMode {
+        didSet { UserDefaults.standard.set(nightVisionMode.rawValue, forKey: Keys.nightVisionMode) }
+    }
     @Published var quickResponse: Bool {
         didSet { UserDefaults.standard.set(quickResponse, forKey: Keys.quick) }
     }
@@ -102,6 +106,7 @@ final class DetectionSettings: ObservableObject {
         static let continuous = "vantage.haptic.continuous"
         static let speech = "vantage.speechFeedback"
         static let nightVision = "vantage.nightVision"
+        static let nightVisionMode = "vantage.nightVisionMode"
         static let quick = "vantage.quickResponse"
     }
 
@@ -115,6 +120,7 @@ final class DetectionSettings: ObservableObject {
         continuousCloseVibration = d.object(forKey: Keys.continuous) as? Bool ?? true
         speechFeedback = d.object(forKey: Keys.speech) as? Bool ?? false
         nightVision = d.object(forKey: Keys.nightVision) as? Bool ?? false
+        nightVisionMode = NightVisionMode(rawValue: d.string(forKey: Keys.nightVisionMode) ?? "") ?? .color
         quickResponse = d.object(forKey: Keys.quick) as? Bool ?? true
     }
 }
