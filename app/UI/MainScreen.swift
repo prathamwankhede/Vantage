@@ -5,7 +5,7 @@ import UIKit
 
 /// Feature switches. Navigate stays off until the landmark loop is redone; Freeroam is the demo.
 enum Features {
-    static let navigate = false
+    static let navigate = true
 }
 
 /// Where the mode screen can send you.
