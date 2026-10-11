@@ -17,8 +17,8 @@ struct SessionScreen: View {
             Color.black.ignoresSafeArea()
             CameraPreview(
                 session: engine.session,
-                depthOverlay: mode == .freeroam && settings.nightVision ? engine.nightVisionImage : nil,
-                fullFrame: mode == .freeroam && settings.nightVision && engine.nightVisionFullFrame
+                depthOverlay: settings.nightVision ? engine.nightVisionImage : nil,
+                fullFrame: settings.nightVision && engine.nightVisionFullFrame
             )
             .ignoresSafeArea()
             .accessibilityHidden(true)
@@ -187,16 +187,12 @@ struct SessionScreen: View {
         if mode == .freeroam {
             parts.append("Haptics")
             parts.append("\(settings.alertMode.title) range")
-            if settings.nightVision {
-                if engine.nightVisionFullFrame {
-                    parts.append("Night vision · full")
-                } else {
-                    parts.append("Night vision · \(settings.nightVisionMode.title)")
-                }
-            }
         } else {
             if engine.quietMode { parts.append("Quiet") }
             parts.append(engine.headphoneStatus)
+        }
+        if settings.nightVision {
+            parts.append(engine.nightVisionFullFrame ? "Night vision · full" : "Night vision · \(settings.nightVisionMode.title)")
         }
         parts.append("Say “Vantage” to ask")
         return parts.joined(separator: " · ")
