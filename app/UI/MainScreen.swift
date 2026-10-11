@@ -3,10 +3,9 @@ import Speech
 import SwiftUI
 import UIKit
 
-/// Feature switches. Navigate is hidden while the team focuses on Freeroam — its screens and
-/// engine code stay in place so it can be rebuilt on top of Freeroam; flip this to bring it back.
+/// Feature switches. Navigate should stay on for demos (Gemini landmarks + HRTF).
 enum Features {
-    static let navigate = false
+    static let navigate = true
 }
 
 /// Where the mode screen can send you.

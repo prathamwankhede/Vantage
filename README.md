@@ -2,7 +2,7 @@
 
 **Know what’s ahead. Move with confidence.**
 
-A calm, chest-worn iPhone guide for blind and low-vision people. Freeroam watches the path with on-device depth and haptics. Navigate uses Gemini landmarks plus AirPods HRTF spatial audio to talk you through a building or block — no map.
+A calm, chest-worn iPhone guide for blind and low-vision people. Freeroam watches the path with LiDAR (or monocular) depth and haptics. Navigate uses **Google Gemini** landmark steps plus **AirPods HRTF** spatial audio — no map, no GPS routing. Voice is **ElevenLabs**, with on-device **Gemma** when the network drops.
 
 Vantage is not a replacement for a white cane or a guide dog.
 
@@ -10,57 +10,64 @@ Vantage is not a replacement for a white cane or a guide dog.
 ![Swift](https://img.shields.io/badge/Swift-SwiftUI-F05138?logo=swift&logoColor=white)
 ![ARKit](https://img.shields.io/badge/ARKit-LiDAR-0A84FF)
 
+## Demo (90 seconds)
+
+1. Strap or hold the phone at chest height. Put on AirPods.
+2. **Freeroam** — walk toward a chair/person; feel near / medium / far haptics (continuous buzz when very close).
+3. Say **“Vantage, what’s ahead?”** — Gemini (or on-device Gemma) answers from the camera.
+4. **Navigate** → “the exit” (or any landmark) — hear short steps; the spatial tone points where to look.
+5. Say **“night vision on”** — LiDAR depth overlay (local command, no Gemini).
+
 ## What it does
 
-1. **Freeroam** — Haptics-only while walking (White Cane–style near/medium/far patterns, continuous buzz when very close). Optional LiDAR night-vision overlay. No beeps, no side bars. Ask with “Vantage…” when you want voice.
-2. **Navigate** — Tell Vantage a destination (“the exit”, “pharmacy counter”). Gemini reads the camera and gives short landmark steps. Depth safety stays on underneath. Hazards and steps are placed with `AVAudioEnvironmentNode` HRTF so AirPods + head tracking let you pinpoint where they are. No MapKit, no GPS routing.
-3. **Ask** — Say “Vantage…” then a question (“What’s ahead?”, “Name that”). Local toggles like “night vision on/off” never call Gemini.
+| Mode | Behavior |
+| --- | --- |
+| **Freeroam** | Haptics-only while walking. No beeps. Ask with “Vantage…” when you want voice. |
+| **Navigate** | Destination in plain language. Gemini returns landmark steps. Depth safety stays on underneath. HRTF places the cue in space. |
+| **Ask** | Wake word + question. Local toggles (`quiet mode`, `night vision on/off`) never call the cloud. |
 
 ## Built with
 
-`Swift` `SwiftUI` `ARKit` `LiDAR` `Vision` `Core Motion` `Core Haptics` `Speech` `ElevenLabs` `Google Gemini` `Gemma` `LiteRT-LM` `XcodeGen`
+`Swift` `SwiftUI` `ARKit` `LiDAR` `Vision` `Core Motion` `Core Haptics` `Speech` `AVAudioEnvironmentNode` `ElevenLabs` `Google Gemini` `Gemma` `LiteRT-LM` `XcodeGen`
 
 ## Run it
 
-Needs a physical iPhone on iOS 17+ (LiDAR recommended). AirPods Pro/Max (or any headphones) unlock Navigate spatial audio; head tracking uses `CMHeadphoneMotionManager` when available.
+Physical iPhone, iOS 17+ (LiDAR recommended). AirPods for spatial Navigate.
 
 ```bash
-brew install xcodegen
-./scripts/download_gemma.sh              # on-device Gemma weights → app/Models/
+brew install xcodegen git-lfs && git lfs install
+./scripts/download_gemma.sh              # optional on-device Gemma → app/Models/
 cd app
-cp Secrets.swift.example Secrets.swift   # add Gemini + ElevenLabs keys
+cp Secrets.swift.example Secrets.swift   # Gemini + ElevenLabs keys
+cp Local.xcconfig.example Local.xcconfig # DEVELOPMENT_TEAM + bundle id
 xcodegen generate
 open Vantage.xcodeproj
 ```
 
-Offline Q&A order: **Gemini (online) → Gemma on-device → Vision templates**.
+See [`app/SETUP.md`](app/SETUP.md) for signing, Developer Mode, and package quirks.
 
-Offline phrase bank (bundled MP3s under `app/Phrases/`) plus a runtime ElevenLabs disk cache (`Documents/TTSCache` — first network speak is saved for offline reuse):
+Offline Q&A: **Gemini → Gemma on-device → Vision templates**.  
+TTS: bundled `app/Phrases/` → disk cache → ElevenLabs → system voice.
 
 ```bash
-# uses app/Secrets.swift when env vars are empty
-export ELEVENLABS_API_KEY=…   # optional override
-python3 scripts/generate_phrases.py
+python3 scripts/generate_phrases.py   # needs a valid ElevenLabs key
 ```
-
-Allow camera, microphone, speech, and motion permissions, then run on device.
 
 ## Repo map
 
 | Path | What’s in it |
 | --- | --- |
-| [`PLAN.md`](PLAN.md) | Product and architecture plan |
-| `app/` | SwiftUI app + `project.yml` for XcodeGen |
-| `app/Core/` | Depth, haptics, speaker, listener, Gemini |
-| `app/Spatial/` | AirPods head motion + spatial tone |
-| `app/Engine/` | Freeroam safety loop + Navigate session |
-| `app/UI/` | Brand shell and session screens |
-| `app/Design/` | Visual identity tokens |
-| `scripts/` | Phrase bank generator |
+| [`PLAN.md`](PLAN.md) | Architecture and cue policy |
+| [`DEVPOST.md`](DEVPOST.md) | HackRU submission copy + demo script |
+| `app/` | SwiftUI app + `project.yml` |
+| `app/Core/` | Depth, haptics, speaker, Gemini, Gemma |
+| `app/Spatial/` | Head tracking + HRTF tone |
+| `app/Engine/` | Freeroam + Navigate |
+| `scripts/` | Phrase bank + Gemma download |
 
 ## Design principles
 
 - Safety never waits on the network.
-- Freeroam: haptics only while walking; voice on ask. Navigate: HRTF tone + haptics + sparse voice.
+- Freeroam: haptics only. Navigate: one HRTF tone + haptics + sparse voice.
 - Say when unsure. Never invent street names.
-- Distinct ink-and-teal visual identity; calm UI without clutter.
+- Ink + teal + cream — calm UI, large targets, VoiceOver-friendly.
